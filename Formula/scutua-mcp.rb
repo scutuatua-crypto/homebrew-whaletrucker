@@ -3,7 +3,6 @@ class ScutuaMcp < Formula
   homepage "https://whaletrucker-ecosystem.pages.dev"
   url "https://github.com/scutuatua-crypto/homebrew-whaletrucker/archive/refs/tags/v0.1.0.tar.gz"
   sha256 "81bd173716cca0642a4b3f31b21348809412781fb224fde31731a493b0cf81b7"
-  version "0.1.0"
   license "MIT"
 
   def install
