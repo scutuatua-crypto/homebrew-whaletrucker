@@ -1,5 +1,5 @@
 class ScutuaMcp < Formula
-  desc "WhaleTrucker scutua-mcp — 157 DeFi tools via MCP"
+  desc "WhaleTrucker MCP CLI — 157 tools · 11 chains"
   homepage "https://whaletrucker-ecosystem.pages.dev"
   url "https://github.com/scutuatua-crypto/homebrew-whaletrucker/archive/refs/tags/v0.1.0.tar.gz"
   sha256 "81bd173716cca0642a4b3f31b21348809412781fb224fde31731a493b0cf81b7"
@@ -10,39 +10,45 @@ class ScutuaMcp < Formula
     (bin/"scutua-mcp").write <<~EOS
       #!/bin/bash
       ENDPOINT="https://scutua-mcp.onrender.com/mcp"
-      CONFIG_CLAUDE="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
-      CONFIG_CURSOR="$HOME/.cursor/mcp.json"
+
       case "$1" in
         config)
-          JSON='{"mcpServers":{"scutua-mcp":{"url":"'$ENDPOINT'"}}}'
           if [ "$2" = "cursor" ]; then
-            mkdir -p "$(dirname "$CONFIG_CURSOR")"
-            echo "$JSON" > "$CONFIG_CURSOR"
-            echo "✅ Cursor config written → $CONFIG_CURSOR"
+            CONFIG_FILE="$HOME/.cursor/mcp.json"
           else
-            mkdir -p "$(dirname "$CONFIG_CLAUDE")"
-            echo "$JSON" > "$CONFIG_CLAUDE"
-            echo "✅ Claude Desktop config written → $CONFIG_CLAUDE"
+            CONFIG_FILE="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
           fi
+          mkdir -p "$(dirname "$CONFIG_FILE")"
+          cat > "$CONFIG_FILE" <<JSON
+      {
+        "mcpServers": {
+          "scutua-mcp": {
+            "type": "sse",
+            "url": "$ENDPOINT"
+          }
+        }
+      }
+      JSON
+          echo "✅ Config written to $CONFIG_FILE"
           ;;
         status)
-          CODE=$(curl -s -o /dev/null -w "%{http_code}" "$ENDPOINT")
-          if [ "$CODE" = "200" ] || [ "$CODE" = "307" ]; then
-            echo "✅ Online (HTTP $CODE)"
-          else
-            echo "⚠️  HTTP $CODE — Render cold starting..."
-          fi
+          echo "🔍 Checking $ENDPOINT ..."
+          curl -sf "$ENDPOINT" > /dev/null && echo "✅ Endpoint is live" || echo "❌ Endpoint unreachable"
+          ;;
+        --version|-v)
+          echo "scutua-mcp v0.1.0"
           ;;
         *)
-          echo "🚚 WhaleTrucker scutua-mcp v0.1.0"
+          echo "🚚 WhaleTrucker scutua-mcp CLI v0.1.0"
           echo ""
-          echo "Commands:"
-          echo "  scutua-mcp config          → Claude Desktop config"
-          echo "  scutua-mcp config cursor   → Cursor config"
-          echo "  scutua-mcp status          → check endpoint"
+          echo "Usage:"
+          echo "  scutua-mcp config          — write Claude Desktop config"
+          echo "  scutua-mcp config cursor   — write Cursor config"
+          echo "  scutua-mcp status          — check endpoint health"
+          echo "  scutua-mcp --version       — show version"
           echo ""
           echo "Endpoint: $ENDPOINT"
-          echo "Tools: 157 | Chains: 11 | Smithery: 84/100"
+          echo "Tools: 157 · Chains: 11"
           ;;
       esac
     EOS
@@ -50,6 +56,6 @@ class ScutuaMcp < Formula
   end
 
   test do
-    assert_match "WhaleTrucker", shell_output("#{bin}/scutua-mcp")
+    assert_match "v0.1.0", shell_output("#{bin}/scutua-mcp --version")
   end
 end
