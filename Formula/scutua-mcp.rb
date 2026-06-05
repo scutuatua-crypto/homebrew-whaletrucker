@@ -32,7 +32,7 @@ class ScutuaMcp < Formula
           ;;
         status)
           echo "🔍 [WhaleTrucker] System Analysis"
-          # เพิ่ม Accept header เพื่อให้ Server ยอมรับการเชื่อมต่อแบบ SSE
+          # เพิ่ม -H 'Accept: text/event-stream' เพื่อให้ Server ยอมรับการเชื่อมต่อครับ
           if curl -sf -H 'Accept: text/event-stream' "$ENDPOINT" > /dev/null; then
             echo "✅ Service: Operational"
             echo "-----------------------------------"
