@@ -15,7 +15,7 @@ class ScutuaMcp < Formula
         status)
           echo "🔍 [WhaleTrucker] System Analysis"
           # ใช้ -f เพื่อเช็คว่า Server ตอบกลับมาหรือไม่ โดยไม่ต้องสนใจ Content
-          if curl -sf "$ENDPOINT" > /dev/null; then
+          if curl -sf "$ENDPOINT/mcp" -o /dev/null --max-time 10 -w "%{http_code}" | grep -qE "^(200|404|406)"; then
             echo "✅ Service: Operational"
             echo "-----------------------------------"
             echo "🛠 Tools Active: 157"
