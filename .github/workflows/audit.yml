@@ -1,0 +1,12 @@
+name: Homebrew Audit
+on: [push, pull_request]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Brew Audit
+        run: |
+          brew tap scutuatua-crypto/homebrew-whaletrucker
+          brew audit --strict scutua-mcp
