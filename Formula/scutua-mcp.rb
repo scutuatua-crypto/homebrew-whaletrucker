@@ -32,8 +32,8 @@ class ScutuaMcp < Formula
           ;;
         status)
           echo "🔍 [WhaleTrucker] System Analysis"
-          # เพิ่ม Header นี้เพื่อให้ Server ยอมคุยด้วยครับ
-          if curl -sf -H 'Accept: text/event-stream' "$ENDPOINT" > /dev/null; then
+          # ใช้ -I เพื่อเช็คหัวการเชื่อมต่อ ไม่ไปกวน Session ของ SSE
+          if curl -sfI "$ENDPOINT" > /dev/null; then
             echo "✅ Service: Operational"
             echo "-----------------------------------"
             echo "🛠 Tools Active: 157"
@@ -50,6 +50,12 @@ class ScutuaMcp < Formula
           ;;
         *)
           echo "🚚 WhaleTrucker scutua-mcp CLI v0.1.0"
+          echo ""
+          echo "Usage:"
+          echo "  scutua-mcp config          — write Claude Desktop config"
+          echo "  scutua-mcp config cursor   — write Cursor config"
+          echo "  scutua-mcp status          — check endpoint health"
+          echo "  scutua-mcp --version       — show version"
           ;;
       esac
     EOS
