@@ -1,12 +1,15 @@
-name: Homebrew Audit
+name: WhaleTrucker Health Check
 on: [push, pull_request]
 
 jobs:
-  audit:
+  audit-formula:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Brew Audit
+      - name: Setup Homebrew
+        run: |
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      - name: Run Audit
         run: |
           brew tap scutuatua-crypto/homebrew-whaletrucker
-          brew audit --strict scutua-mcp
+          brew audit --strict Formula/scutua-mcp.rb
