@@ -32,7 +32,7 @@ class ScutuaMcp < Formula
           ;;
         status)
           echo "🔍 [WhaleTrucker] System Analysis"
-          # เพิ่ม -H 'Accept: text/event-stream' เพื่อให้ Server ยอมรับการเชื่อมต่อครับ
+          # เพิ่ม Header เพื่อปลดล็อก Server ครับ
           if curl -sf -H 'Accept: text/event-stream' "$ENDPOINT" > /dev/null; then
             echo "✅ Service: Operational"
             echo "-----------------------------------"
@@ -50,12 +50,6 @@ class ScutuaMcp < Formula
           ;;
         *)
           echo "🚚 WhaleTrucker scutua-mcp CLI v0.1.0"
-          echo ""
-          echo "Usage:"
-          echo "  scutua-mcp config          — write Claude Desktop config"
-          echo "  scutua-mcp config cursor   — write Cursor config"
-          echo "  scutua-mcp status          — check endpoint health"
-          echo "  scutua-mcp --version       — show version"
           ;;
       esac
     EOS
