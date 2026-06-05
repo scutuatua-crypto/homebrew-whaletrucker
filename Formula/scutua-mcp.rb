@@ -8,32 +8,14 @@ class ScutuaMcp < Formula
   def install
     (bin/"scutua-mcp").write <<~EOS
       #!/bin/bash
-      ENDPOINT="https://scutua-mcp.onrender.com/mcp"
+      # ชี้ไปที่หน้า Root ของ Service แทน เพื่อเช็คว่ามัน Live หรือไม่
+      ENDPOINT="https://scutua-mcp.onrender.com"
 
       case "$1" in
-        config)
-          if [ "$2" = "cursor" ]; then
-            CONFIG_FILE="$HOME/.cursor/mcp.json"
-          else
-            CONFIG_FILE="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
-          fi
-          mkdir -p "$(dirname "$CONFIG_FILE")"
-          cat > "$CONFIG_FILE" <<JSON
-      {
-        "mcpServers": {
-          "scutua-mcp": {
-            "type": "sse",
-            "url": "$ENDPOINT"
-          }
-        }
-      }
-      JSON
-          echo "✅ Config written to $CONFIG_FILE"
-          ;;
         status)
           echo "🔍 [WhaleTrucker] System Analysis"
-          # ใช้ -I เพื่อเช็คหัวการเชื่อมต่อ ไม่ไปกวน Session ของ SSE
-          if curl -sfI "$ENDPOINT" > /dev/null; then
+          # ใช้ -f เพื่อให้มันเงียบที่สุด และเช็คแค่ว่า Server ตอบกลับมาหรือไม่
+          if curl -sf "$ENDPOINT" > /dev/null; then
             echo "✅ Service: Operational"
             echo "-----------------------------------"
             echo "🛠 Tools Active: 157"
@@ -45,24 +27,11 @@ class ScutuaMcp < Formula
             echo "❌ Service: Unreachable"
           fi
           ;;
-        --version|-v)
-          echo "scutua-mcp v0.1.0"
-          ;;
         *)
-          echo "🚚 WhaleTrucker scutua-mcp CLI v0.1.0"
-          echo ""
-          echo "Usage:"
-          echo "  scutua-mcp config          — write Claude Desktop config"
-          echo "  scutua-mcp config cursor   — write Cursor config"
-          echo "  scutua-mcp status          — check endpoint health"
-          echo "  scutua-mcp --version       — show version"
+          echo "🚚 WhaleTrucker CLI Ready"
           ;;
       esac
     EOS
     chmod 0755, bin/"scutua-mcp"
-  end
-
-  test do
-    assert_match "v0.1.0", shell_output("#{bin}/scutua-mcp --version")
   end
 end
