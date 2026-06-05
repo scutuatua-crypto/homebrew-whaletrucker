@@ -8,13 +8,13 @@ class ScutuaMcp < Formula
   def install
     (bin/"scutua-mcp").write <<~EOS
       #!/bin/bash
-      # ชี้ไปที่หน้า Root ของ Service แทน เพื่อเช็คว่ามัน Live หรือไม่
+      # เปลี่ยนมาเช็คที่หน้า Root ของ Service แทนการเช็คที่ /mcp
       ENDPOINT="https://scutua-mcp.onrender.com"
 
       case "$1" in
         status)
           echo "🔍 [WhaleTrucker] System Analysis"
-          # ใช้ -f เพื่อให้มันเงียบที่สุด และเช็คแค่ว่า Server ตอบกลับมาหรือไม่
+          # ใช้ -f เพื่อเช็คว่า Server ตอบกลับมาหรือไม่ โดยไม่ต้องสนใจ Content
           if curl -sf "$ENDPOINT" > /dev/null; then
             echo "✅ Service: Operational"
             echo "-----------------------------------"
