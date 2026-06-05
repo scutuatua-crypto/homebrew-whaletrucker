@@ -32,15 +32,10 @@ class ScutuaMcp < Formula
           ;;
         status)
           echo "🔍 [WhaleTrucker] System Analysis"
-          # ตรวจสอบการเชื่อมต่อ
           if curl -sf "$ENDPOINT" > /dev/null; then
             echo "✅ Service: Operational"
-            echo "-----------------------------------"
             echo "🛠 Tools Active: 157"
             echo "🔗 Chains Running: 11"
-            echo "⚙️  Smithery Status: 84/100"
-            echo "-----------------------------------"
-            echo "⚡️ Status check completed at $(date +%T)"
           else
             echo "❌ Service: Unreachable"
           fi
@@ -50,15 +45,6 @@ class ScutuaMcp < Formula
           ;;
         *)
           echo "🚚 WhaleTrucker scutua-mcp CLI v0.1.0"
-          echo ""
-          echo "Usage:"
-          echo "  scutua-mcp config          — write Claude Desktop config"
-          echo "  scutua-mcp config cursor   — write Cursor config"
-          echo "  scutua-mcp status          — check endpoint health"
-          echo "  scutua-mcp --version       — show version"
-          echo ""
-          echo "Endpoint: $ENDPOINT"
-          echo "Tools: 157 · Chains: 11"
           ;;
       esac
     EOS
