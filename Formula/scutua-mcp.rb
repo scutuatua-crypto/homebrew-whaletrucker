@@ -32,7 +32,7 @@ class ScutuaMcp < Formula
           ;;
         status)
           echo "🔍 [WhaleTrucker] System Analysis"
-          # เพิ่ม Header เพื่อปลดล็อก Server ครับ
+          # เพิ่ม Header นี้เพื่อให้ Server ยอมคุยด้วยครับ
           if curl -sf -H 'Accept: text/event-stream' "$ENDPOINT" > /dev/null; then
             echo "✅ Service: Operational"
             echo "-----------------------------------"
