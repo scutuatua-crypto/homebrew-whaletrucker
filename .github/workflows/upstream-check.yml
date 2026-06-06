@@ -48,6 +48,5 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: '🔄 Upstream Update Available',
-              body: `## Upstream มีอัพเดทใหม่\n\n${parts.join('\n')}\n\nรัน subtree pull เพื่ออัพเดท:\n\`\`\`bash\ngit subtree pull --prefix=brew https://github.com/Homebrew/brew master --squash\ngit subtree pull --prefix=homebrew-core https://github.com/Homebrew/homebrew-core master --squash\n\`\`\``,
-              labels: ['upstream-update']
+              body: `## Upstream มีอัพเดทใหม่\n\n${parts.join('\n')}\n\nรัน subtree pull เพื่ออัพเดท:\n\`\`\`bash\ngit subtree pull --prefix=brew https://github.com/Homebrew/brew master --squash\ngit subtree pull --prefix=homebrew-core https://github.com/Homebrew/homebrew-core master --squash\n\`\`\``
             });
