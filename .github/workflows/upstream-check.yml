@@ -1,0 +1,53 @@
+name: 🔍 Check Upstream Updates
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check brew upstream
+        id: brew
+        run: |
+          REMOTE=$(git ls-remote https://github.com/Homebrew/brew HEAD | awk '{print $1}' | cut -c1-7)
+          LOCAL=$(git log --oneline brew/ | head -1 | awk '{print $1}')
+          if [ "$LOCAL" != "$REMOTE" ]; then
+            echo "outdated=true" >> $GITHUB_OUTPUT
+          else
+            echo "outdated=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check homebrew-core upstream
+        id: core
+        run: |
+          REMOTE=$(git ls-remote https://github.com/Homebrew/homebrew-core HEAD | awk '{print $1}' | cut -c1-7)
+          LOCAL=$(git log --oneline homebrew-core/ | head -1 | awk '{print $1}')
+          if [ "$LOCAL" != "$REMOTE" ]; then
+            echo "outdated=true" >> $GITHUB_OUTPUT
+          else
+            echo "outdated=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create issue if outdated
+        if: steps.brew.outputs.outdated == 'true' || steps.core.outputs.outdated == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const brew = '${{ steps.brew.outputs.outdated }}' === 'true';
+            const core = '${{ steps.core.outputs.outdated }}' === 'true';
+            const parts = [];
+            if (brew) parts.push('- `brew/` มี upstream update ใหม่');
+            if (core) parts.push('- `homebrew-core/` มี upstream update ใหม่');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🔄 Upstream Update Available',
+              body: `## Upstream มีอัพเดทใหม่\n\n${parts.join('\n')}\n\nรัน subtree pull เพื่ออัพเดท:\n\`\`\`bash\ngit subtree pull --prefix=brew https://github.com/Homebrew/brew master --squash\ngit subtree pull --prefix=homebrew-core https://github.com/Homebrew/homebrew-core master --squash\n\`\`\``,
+              labels: ['upstream-update']
+            });
