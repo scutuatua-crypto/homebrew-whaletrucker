@@ -24,7 +24,7 @@ jobs:
           fi
 
       - name: Check homebrew-core upstream
-        id: core
+        id: hbcore
         run: |
           REMOTE=$(git ls-remote https://github.com/Homebrew/homebrew-core HEAD | awk '{print $1}' | cut -c1-7)
           LOCAL=$(git log --oneline homebrew-core/ | head -1 | awk '{print $1}')
@@ -35,15 +35,15 @@ jobs:
           fi
 
       - name: Create issue if outdated
-        if: steps.brew.outputs.outdated == 'true' || steps.core.outputs.outdated == 'true'
+        if: steps.brew.outputs.outdated == 'true' || steps.hbcore.outputs.outdated == 'true'
         uses: actions/github-script@v7
         with:
           script: |
-            const brew = '${{ steps.brew.outputs.outdated }}' === 'true';
-            const core = '${{ steps.core.outputs.outdated }}' === 'true';
+            const brewOutdated = '${{ steps.brew.outputs.outdated }}' === 'true';
+            const coreOutdated = '${{ steps.hbcore.outputs.outdated }}' === 'true';
             const parts = [];
-            if (brew) parts.push('- `brew/` มี upstream update ใหม่');
-            if (core) parts.push('- `homebrew-core/` มี upstream update ใหม่');
+            if (brewOutdated) parts.push('- `brew/` มี upstream update ใหม่');
+            if (coreOutdated) parts.push('- `homebrew-core/` มี upstream update ใหม่');
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
