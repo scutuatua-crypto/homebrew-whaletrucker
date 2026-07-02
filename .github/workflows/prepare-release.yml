@@ -1,3 +1,4 @@
+cat > .github/workflows/prepare-release.yml << 'EOF'
 name: Prepare Homebrew Release
 
 on:
@@ -50,18 +51,17 @@ jobs:
           echo "Setting sha256=${SHA} in formula files"
           for f in Formula/scutua-mcp.rb homebrew-core/Formula/scutua-mcp.rb; do
             if [ -f "$f" ]; then
-              # Replace any sha256 line with the computed one
               sed -E -i "s/^\s*sha256\s+.*/  sha256 \"${SHA}\"/" "$f"
             fi
           done
-          git pull --rebase origin main
+          git fetch origin main
+          git rebase origin/main
           git add Formula/scutua-mcp.rb homebrew-core/Formula/scutua-mcp.rb || true
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
             git commit -m "chore(release): set sha256 for v0.1.0 (${SHA})"
-            git pull --rebase origin main
-          git push origin HEAD:main
+            git push origin HEAD:main
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -71,11 +71,16 @@ jobs:
           if [ -f homebrew-core/Formula/scutua-mcp.rb ]; then
             git rm -f homebrew-core/Formula/scutua-mcp.rb || true
             if git commit -m "chore(release): remove duplicate formula in homebrew-core"; then
-              git pull --rebase origin main
-          git push origin HEAD:main
+              git fetch origin main
+              git rebase origin/main
+              git push origin HEAD:main
             else
               echo "No removal commit needed"
             fi
           else
             echo "No duplicate formula found"
           fi
+EOF
+git add .github/workflows/prepare-release.yml
+git commit -m "fix: clean up prepare-release.yml indentation and git flow"
+git push
