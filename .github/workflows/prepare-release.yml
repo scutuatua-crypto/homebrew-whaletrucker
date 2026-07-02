@@ -54,6 +54,7 @@ jobs:
               sed -E -i "s/^\s*sha256\s+.*/  sha256 \"${SHA}\"/" "$f"
             fi
           done
+          git pull --rebase origin main
           git add Formula/scutua-mcp.rb homebrew-core/Formula/scutua-mcp.rb || true
           if git diff --staged --quiet; then
             echo "No changes to commit"
