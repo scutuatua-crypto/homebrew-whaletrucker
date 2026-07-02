@@ -1,11 +1,6 @@
-  - name: Install Homebrew on Linux
-    run: |
-      NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-      echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> $GITHUB_ENV
-      eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-
-  - name: Verify brew
-    run: brew --version
+  - name: Set up Homebrew
+    id: set-up-homebrew
+    uses: Homebrew/actions/setup-homebrew@master
 
   - name: Run Audit
     run: |
