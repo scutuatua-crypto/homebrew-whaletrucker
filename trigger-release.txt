@@ -1,0 +1,3 @@
+trigger: start prepare-release workflow
+
+This file was created by the assistant to trigger the .github/workflows/prepare-release.yml workflow on branch v0.1.0.
