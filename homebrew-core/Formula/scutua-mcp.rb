@@ -1,9 +1,8 @@
 class ScutuaMcp < Formula
   desc "WhaleTrucker MCP CLI — 157 tools · 11 chains"
-  homepage "https://whaletrucker-ecosystem.pages.dev"
+  homepage "https://whaletrucker-ecos.dev"
   url "https://github.com/scutuatua-crypto/homebrew-whaletrucker/archive/refs/tags/v0.1.0.tar.gz"
   sha256 :no_check
-  version "0.1.0"
   license "MIT"
 
   def install
@@ -15,7 +14,7 @@ class ScutuaMcp < Formula
       case "$1" in
         status)
           echo "🔍 [WhaleTrucker] System Analysis"
-          # ใช้ -f เพื่อเช็คว่า Server ตอบกลับมาหรือไม่ โดยไม่ต้องสนใจ Content
+          # ใช��� -f เพื่อเช็คว่า Server ตอบกลับมาหรือไม่ โดยไม่ต้องสนใจ Content
           HTTP_CODE=$(curl -s -o /dev/null --max-time 10 -w "%{http_code}" "$ENDPOINT/mcp")
         if echo "$HTTP_CODE" | grep -qE "^(200|404|406)"; then
             echo "✅ Service: Operational"
