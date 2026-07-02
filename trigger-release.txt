@@ -1,3 +1,3 @@
-trigger: restart prepare-release workflow
+trigger: retrigger prepare-release workflow
 
-Triggered at 2026-07-02T05:10:00Z by automation after maintainer granted write access. This commit forces the workflow to re-run and compute the tarball SHA256.
+Triggered at 2026-07-02T05:20:00Z by maintainer request to recompute tarball SHA256 and finish release.
