@@ -59,7 +59,8 @@ jobs:
             echo "No changes to commit"
           else
             git commit -m "chore(release): set sha256 for v0.1.0 (${SHA})"
-            git push origin HEAD:main
+            git pull --rebase origin main
+          git push origin HEAD:main
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -69,7 +70,8 @@ jobs:
           if [ -f homebrew-core/Formula/scutua-mcp.rb ]; then
             git rm -f homebrew-core/Formula/scutua-mcp.rb || true
             if git commit -m "chore(release): remove duplicate formula in homebrew-core"; then
-              git push origin HEAD:main
+              git pull --rebase origin main
+          git push origin HEAD:main
             else
               echo "No removal commit needed"
             fi
