@@ -1,8 +1,9 @@
 class ScutuaMcp < Formula
   desc "WhaleTrucker MCP CLI — 157 tools · 11 chains"
   homepage "https://whaletrucker-ecosystem.pages.dev"
-  url "https://github.com/scutuatua-crypto/homebrew-whaletrucker/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "81bd173716cca0642a4b3f31b21348809412781fb224fde31731a493b0cf81b7"
+  url "https://github.com/scutuatua-crypto/homebrew-whaletrucker/archive/refs/heads/main.tar.gz"
+  sha256 :no_check
+  version "0.1.0"
   license "MIT"
 
   def install
@@ -33,6 +34,6 @@ class ScutuaMcp < Formula
           ;;
       esac
     EOS
-    chmod 0755, bin/"scutua-mcp"
+    (bin/"scutua-mcp").chmod 0755
   end
 end
