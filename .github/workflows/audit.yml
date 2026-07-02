@@ -1,18 +1,13 @@
-name: WhaleTrucker Health Check
-on: [push, pull_request]
+  - name: Install Homebrew on Linux
+    run: |
+      NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> $GITHUB_ENV
+      eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 
-jobs:
-  audit-formula:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+  - name: Verify brew
+    run: brew --version
 
-      - name: Set up Homebrew
-        id: set-up-homebrew
-        uses: Homebrew/actions/setup-homebrew@master
-
-      - name: Run Audit
-        run: |
-          brew tap scutuatua-crypto/homebrew-whaletrucker
-          brew audit --strict scutua-mcp
+  - name: Run Audit
+    run: |
+      brew tap scutuatua-crypto/homebrew-whaletrucker
+      brew audit --strict scutua-mcp
