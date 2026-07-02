@@ -1,0 +1,76 @@
+name: Prepare Homebrew Release
+
+on:
+  push:
+    branches:
+      - 'v0.1.0'
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create annotated tag (if missing)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse refs/tags/v0.1.0 >/dev/null 2>&1; then
+            echo "tag v0.1.0 already exists"
+          else
+            git tag -a v0.1.0 -m "v0.1.0"
+            git push origin v0.1.0
+          fi
+
+      - name: Create GitHub release (draft if already exists)
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v0.1.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download v0.1.0 tarball and compute sha256
+        id: calc
+        run: |
+          TARURL="https://github.com/${{ github.repository }}/archive/refs/tags/v0.1.0.tar.gz"
+          echo "Downloading $TARURL"
+          curl -L -s -o release.tar.gz "$TARURL"
+          SHA=$(sha256sum release.tar.gz | awk '{print $1}')
+          echo "sha256=$SHA" >> $GITHUB_OUTPUT
+
+      - name: Update formula files with computed sha256
+        run: |
+          SHA="${{ steps.calc.outputs.sha256 }}"
+          echo "Setting sha256=${SHA} in formula files"
+          for f in Formula/scutua-mcp.rb homebrew-core/Formula/scutua-mcp.rb; do
+            if [ -f "$f" ]; then
+              # Replace any sha256 line with the computed one
+              sed -E -i "s/^\s*sha256\s+.*/  sha256 \"${SHA}\"/" "$f"
+            fi
+          done
+          git add Formula/scutua-mcp.rb homebrew-core/Formula/scutua-mcp.rb || true
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore(release): set sha256 for v0.1.0 (${SHA})"
+            git push origin HEAD:main
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Remove duplicate formula file (homebrew-core)
+        run: |
+          if [ -f homebrew-core/Formula/scutua-mcp.rb ]; then
+            git rm -f homebrew-core/Formula/scutua-mcp.rb || true
+            if git commit -m "chore(release): remove duplicate formula in homebrew-core"; then
+              git push origin HEAD:main
+            else
+              echo "No removal commit needed"
+            fi
+          else
+            echo "No duplicate formula found"
+          fi
