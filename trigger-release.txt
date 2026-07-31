@@ -1,0 +1,3 @@
+trigger: retrigger prepare-release workflow
+
+Triggered at 2026-07-02T05:20:00Z by maintainer request to recompute tarball SHA256 and finish release.
