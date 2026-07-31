@@ -1,6 +1,6 @@
 class ScutuaMcp < Formula
   desc "WhaleTrucker MCP CLI — 157 tools · 11 chains"
-  homepage "https://whaletrucker-ecos.pages.dev"
+  homepage "https://whaletrucker-ecosystem.pages.dev"
   url "https://github.com/scutuatua-crypto/homebrew-whaletrucker/archive/refs/tags/v0.1.0.tar.gz"
   sha256 "d4d7cb74a783eec8efec240a9ff30db3d29ac5bd12f75c4c716bad1f2db00594"
   license "MIT"
