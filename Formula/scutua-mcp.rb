@@ -34,3 +34,4 @@ class ScutuaMcp < Formula
     (bin/"scutua-mcp").chmod 0755
   end
 end
+
