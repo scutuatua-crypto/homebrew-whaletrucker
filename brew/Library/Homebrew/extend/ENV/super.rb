@@ -93,7 +93,6 @@ module Superenv
     self["HOMEBREW_OPT"] = "#{HOMEBREW_PREFIX}/opt"
     self["HOMEBREW_TEMP"] = HOMEBREW_TEMP.to_s
     self["HOMEBREW_OPTFLAGS"] = determine_optflags
-    self["HOMEBREW_ARCHFLAGS"] = ""
     self["HOMEBREW_MAKE_JOBS"] = determine_make_jobs.to_s
     self["CMAKE_PREFIX_PATH"] = determine_cmake_prefix_path
     self["CMAKE_FRAMEWORK_PATH"] = determine_cmake_frameworks_path
@@ -147,16 +146,18 @@ module Superenv
     # a - apply fix for apr-1-config path
   end
 
+  sig { void }
+  def llvm_clang
+    super
+    self["CC"] = self["OBJC"] = "clang"
+    self["CXX"] = self["OBJCXX"] = "clang++"
+  end
+
   private
 
   sig { params(val: T.any(String, Pathname)).returns(String) }
   def cc=(val)
     self["HOMEBREW_CC"] = super
-  end
-
-  sig { params(val: T.any(String, Pathname)).returns(String) }
-  def cxx=(val)
-    self["HOMEBREW_CXX"] = super
   end
 
   sig { returns(String) }
@@ -276,6 +277,7 @@ module Superenv
   sig { returns(T.nilable(PATH)) }
   def determine_cmake_prefix_path
     PATH.new(
+      Superenv.bin&.parent,
       keg_only_deps.map(&:opt_prefix),
       HOMEBREW_PREFIX.to_s,
     ).existing

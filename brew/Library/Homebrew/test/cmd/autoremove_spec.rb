@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "cmd/autoremove"
@@ -12,11 +13,11 @@ RSpec.describe Homebrew::Cmd::Autoremove do
 
     before do
       # Make testball1 poured from a bottle
-      tab_attributes = { poured_from_bottle: true, installed_on_request: true, installed_as_dependency: false }
+      tab_attributes = { poured_from_bottle: true, installed_on_request: true }
       setup_test_formula("testball1", tab_attributes:)
 
       # Make testball2 poured from a bottle and an unused dependency
-      tab_attributes = { poured_from_bottle: true, installed_on_request: false, installed_as_dependency: true }
+      tab_attributes = { poured_from_bottle: true, installed_on_request: false }
       setup_test_formula("testball2", tab_attributes:)
     end
 

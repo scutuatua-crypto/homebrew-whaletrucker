@@ -1,55 +1,36 @@
+---
+last_review_date: "2026-07-18"
+---
+
 # Command Not Found
 
-This feature reproduces Ubuntu's `command-not-found` for Homebrew users on macOS.
+Homebrew can suggest a formula when an interactive shell cannot find a command.
+The handler queries `brew which-formula --explain` and prints an installation command when Homebrew knows which formula provides the missing executable.
 
-On Ubuntu, when you try to use a command that doesn't exist locally but is
-available through a package, Bash will suggest a command to install it.
-Using this script, you can replicate this feature on macOS:
+## Setup
 
-```console
-$ when
-The program 'when' is currently not installed. You can install it by typing:
-  brew install when
-```
+Run this command in an interactive Bash, fish or zsh session to print the setup instructions for that shell:
 
-## Install
-
-Installation instructions for your shell can be viewed by running:
-
-```bash
+```sh
 brew command-not-found-init
 ```
 
-* **Bash and Zsh**: Add the following line to your `~/.bash_profile` (bash) or `~/.zshrc` (zsh):
+For Bash or zsh, add the printed handler-loading block to the startup file identified by the command.
+For fish, add its block to `~/.config/fish/config.fish`.
 
-    ```bash
-    HOMEBREW_COMMAND_NOT_FOUND_HANDLER="$(brew --repository)/Library/Homebrew/command-not-found/handler.sh"
-    if [ -f "$HOMEBREW_COMMAND_NOT_FOUND_HANDLER" ]; then
-      source "$HOMEBREW_COMMAND_NOT_FOUND_HANDLER";
-    fi
-    ```
+The setup loads the handler from the current Homebrew repository, so it remains in sync when Homebrew updates.
+Do not copy the handler implementation into a shell configuration file.
 
-* **Fish**: Add the following line to your `~/.config/fish/config.fish`:
+## Behaviour
 
-    ```fish
-    set HOMEBREW_COMMAND_NOT_FOUND_HANDLER (brew --repository)/Library/Homebrew/command-not-found/handler.fish
-    if test -f $HOMEBREW_COMMAND_NOT_FOUND_HANDLER
-      source $HOMEBREW_COMMAND_NOT_FOUND_HANDLER
-    end
-    ```
+When a command is missing, the handler searches Homebrew's formula metadata for an executable with the same name.
+For example, a match can produce output similar to:
 
-## Requirements
+```console
+$ example-command
+The program 'example-command' is currently not installed. You can install it by typing:
+  brew install example-formula
+```
 
-This tool requires one of the following:
-
-* [Zsh](https://www.zsh.org) (the default on macOS Catalina and above)
-* [Bash](https://www.gnu.org/software/bash/) (version 4 and higher)
-* [Fish](https://fishshell.com)
-
-## How it works
-
-The `handler.sh` script defines a `command_not_found_handle` function which is
-used by Bash when you try a command that doesn't exist.
-The function calls `brew which-formula --explain` on your command.
-If it finds a match it will print installation instructions.
-If not, you'll get an error as expected.
+If Homebrew finds no match, the shell prints its normal command-not-found error.
+The handler does not install software automatically.

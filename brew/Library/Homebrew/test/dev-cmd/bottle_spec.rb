@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "cmd/shared_examples/args_parse"
@@ -5,7 +6,7 @@ require "dev-cmd/bottle"
 
 RSpec.describe Homebrew::DevCmd::Bottle do
   def stub_hash(parameters)
-    <<~EOS
+    <<~JSON
       {
         "#{parameters[:name]}":{
            "formula":{
@@ -22,12 +23,13 @@ RSpec.describe Homebrew::DevCmd::Bottle do
                     "filename":"#{parameters[:filename]}",
                     "local_filename":"#{parameters[:local_filename]}",
                     "sha256":"#{parameters[:sha256]}"
+                    #{",\"sbom\":#{parameters[:sbom].to_json}" if parameters[:sbom]}
                  }
               }
            }
         }
       }
-    EOS
+    JSON
   end
 
   it_behaves_like "parseable arguments"
@@ -134,7 +136,7 @@ RSpec.describe Homebrew::DevCmd::Bottle do
       .and be_a_success
       # rubocop:enable Layout/MultilineMethodCallIndentation
 
-      expect((core_tap.path/"Formula/testball.rb").read).to eq <<~EOS
+      expect((core_tap.path/"Formula/testball.rb").read).to eq <<~RUBY
         class Testball < Formula
           desc "Some test"
           homepage "https://brew.sh/testball"
@@ -163,20 +165,20 @@ RSpec.describe Homebrew::DevCmd::Bottle do
           # something here
 
         end
-      EOS
+      RUBY
     end
 
     it "replaces the bottle block in a formula that already has a bottle block" do
       core_tap.path.cd do
         system "git", "-c", "init.defaultBranch=master", "init"
-        setup_test_formula "testball", bottle_block: <<~EOS
+        setup_test_formula "testball", bottle_block: <<~RUBY
 
           bottle do
             sha256 cellar: :any_skip_relocation, arm64_big_sur: "c3c650d75f5188f5d6edd351dd3215e141b73b8ec1cf9144f30e39cbc45de72e"
             sha256 cellar: :any_skip_relocation, big_sur:       "6b276491297d4052538bd2fd22d5129389f27d90a98f831987236a5b90511b98"
             sha256 cellar: :any_skip_relocation, catalina:      "16cf230afdfcb6306c208d169549cf8773c831c8653d2c852315a048960d7e72"
           end
-        EOS
+        RUBY
         system "git", "add", "--all"
         system "git", "commit", "-m", "testball 0.1"
       end
@@ -204,7 +206,7 @@ RSpec.describe Homebrew::DevCmd::Bottle do
       .and be_a_success
       # rubocop:enable Layout/MultilineMethodCallIndentation
 
-      expect((core_tap.path/"Formula/testball.rb").read).to eq <<~EOS
+      expect((core_tap.path/"Formula/testball.rb").read).to eq <<~RUBY
         class Testball < Formula
           desc "Some test"
           homepage "https://brew.sh/testball"
@@ -233,18 +235,18 @@ RSpec.describe Homebrew::DevCmd::Bottle do
           # something here
 
         end
-      EOS
+      RUBY
     end
 
     it "updates the bottle block in a formula that already has a bottle block when using --keep-old" do
       core_tap.path.cd do
         system "git", "-c", "init.defaultBranch=master", "init"
-        setup_test_formula "testball", bottle_block: <<~EOS
+        setup_test_formula "testball", bottle_block: <<~RUBY
 
           bottle do
             sha256 cellar: :any, sonoma: "6971b6eebf4c00eaaed72a1104a49be63861eabc95d679a0c84040398e320059"
           end
-        EOS
+        RUBY
         system "git", "add", "--all"
         system "git", "commit", "-m", "testball 0.1"
       end
@@ -274,7 +276,7 @@ RSpec.describe Homebrew::DevCmd::Bottle do
       .and be_a_success
       # rubocop:enable Layout/MultilineMethodCallIndentation
 
-      expect((core_tap.path/"Formula/testball.rb").read).to eq <<~EOS
+      expect((core_tap.path/"Formula/testball.rb").read).to eq <<~RUBY
         class Testball < Formula
           desc "Some test"
           homepage "https://brew.sh/testball"
@@ -304,7 +306,89 @@ RSpec.describe Homebrew::DevCmd::Bottle do
           # something here
 
         end
-      EOS
+      RUBY
+    end
+
+    it "writes an all bottle JSON for matching platform bottles" do
+      core_tap.path.cd do
+        system "git", "-c", "init.defaultBranch=master", "init"
+        setup_test_formula "testball"
+        system "git", "add", "--all"
+        system "git", "commit", "-m", "testball 0.1"
+      end
+
+      mktmpdir.cd do
+        sha256 = "8f9aecd233463da6a4ea55f5f88fc5841718c013f3e2a7941350d6130f1dc149"
+        bottle_json_paths = ["arm64_big_sur", "big_sur"].map do |tag|
+          Pathname("testball--1.0.#{tag}.bottle.tar.gz").write("test")
+          Pathname("#{TEST_TMPDIR}/testball-1.0.#{tag}.bottle.json").tap do |path|
+            path.write stub_hash(
+              name:           "testball",
+              version:        "1.0",
+              path:           "#{core_tap.path}/Formula/testball.rb",
+              cellar:         "any_skip_relocation",
+              os:             tag,
+              filename:       "testball-1.0.#{tag}.bottle.tar.gz",
+              local_filename: "testball--1.0.#{tag}.bottle.tar.gz",
+              sha256:,
+              sbom:           { "packages" => [{ "SPDXID" => "SPDXRef-#{tag}" }] },
+            )
+          end
+        end
+
+        # RuboCop would align the `.and` with `.to_stdout` which is too floaty.
+        # rubocop:disable Layout/MultilineMethodCallIndentation
+        expect do
+          brew "bottle", "--merge", "--write", "--no-commit", *bottle_json_paths
+        end.to output(/sha256 cellar: :any_skip_relocation, all: "#{sha256}"/).to_stdout
+        .and not_to_output.to_stderr
+        .and be_a_success
+        # rubocop:enable Layout/MultilineMethodCallIndentation
+
+        all_bottle_hash = JSON.parse(Pathname("testball--1.0.all.bottle.json").read)
+        all_bottle_tag_hash = all_bottle_hash.dig("testball", "bottle", "tags", "all")
+
+        expect(all_bottle_hash.dig("testball", "bottle", "cellar")).to eq("any_skip_relocation")
+        expect(all_bottle_hash.dig("testball", "bottle", "tags").keys).to eq(["all"])
+        expect(all_bottle_tag_hash).to include(
+          "filename"       => "testball-1.0.all.bottle.tar.gz",
+          "local_filename" => "testball--1.0.all.bottle.tar.gz",
+          "sha256"         => sha256,
+        )
+        expect(all_bottle_tag_hash.dig("sbom", "tags").keys).to contain_exactly("arm64_big_sur", "big_sur")
+        expect(all_bottle_tag_hash).not_to have_key("cellar")
+        expect(Pathname("testball--1.0.all.bottle.tar.gz")).to exist
+      end
+    end
+
+    it "merges when an all bottle cannot be created" do
+      core_tap.path.cd do
+        system "git", "-c", "init.defaultBranch=master", "init"
+        setup_test_formula "testball", bottle_block: <<~RUBY
+
+          bottle do
+            sha256 cellar: :any_skip_relocation, all: "d7b9f4e8bf83608b71fe958a99f19f2e5e68bb2582965d32e41759c24f1aef97"
+          end
+        RUBY
+        system "git", "add", "--all"
+        system "git", "commit", "-m", "testball 0.1"
+      end
+
+      expect do
+        brew "bottle",
+             "--merge",
+             "--write",
+             "--no-commit",
+             "#{TEST_TMPDIR}/testball-1.0.arm64_big_sur.bottle.json",
+             "#{TEST_TMPDIR}/testball-1.0.big_sur.bottle.json",
+             { "GITHUB_EVENT_PATH" => nil }
+      end.to output(/sha256 cellar: :any_skip_relocation, arm64_big_sur:/).to_stdout
+                                                                          .and not_to_output.to_stderr
+                                                                                            .and be_a_success
+
+      formula_contents = (core_tap.path/"Formula/testball.rb").read
+      expect(formula_contents).to include("big_sur:")
+      expect(formula_contents).not_to include("all:")
     end
   end
 

@@ -4,6 +4,7 @@
 require "mktemp"
 require "system_command"
 require "utils/output"
+require "utils/path"
 
 # Module containing all available strategies for unpacking archives.
 module UnpackStrategy
@@ -80,7 +81,10 @@ module UnpackStrategy
     }.fetch(type, type)
 
     begin
+      # The strategy class name is derived dynamically from the type.
+      # rubocop:disable Sorbet/ConstantsFromStrings
       const_get(type.to_s.split("_").map(&:capitalize).join.gsub(/\d+[a-z]/, &:upcase))
+      # rubocop:enable Sorbet/ConstantsFromStrings
     rescue NameError
       nil
     end
@@ -88,8 +92,7 @@ module UnpackStrategy
 
   sig { params(extension: String).returns(T.nilable(UnpackStrategyType)) }
   def self.from_extension(extension)
-    strategies.sort_by { |s| s.extensions.map(&:length).max || 0 }
-              .reverse
+    strategies.sort_by { |s| -(s.extensions.map(&:length).max || 0) }
               .find { |s| extension.end_with?(*s.extensions) }
   end
 
@@ -131,8 +134,8 @@ module UnpackStrategy
   }
   def initialize(path, ref_type: nil, ref: nil, merge_xattrs: false)
     @path = T.let(Pathname(path).expand_path, Pathname)
-    @ref_type = T.let(ref_type, T.nilable(Symbol))
-    @ref = T.let(ref, T.nilable(String))
+    @ref_type = ref_type
+    @ref = ref
     @merge_xattrs = merge_xattrs
   end
 

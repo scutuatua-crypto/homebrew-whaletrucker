@@ -3,141 +3,143 @@
 
 require "cachable"
 require "api"
-require "api/source_download"
-require "download_queue"
-require "formula_stub"
 
 module Homebrew
   module API
     # Helper functions for using the JSON internal API.
     module Internal
+      extend T::Generic
       extend Cachable
+
+      Cache = type_template { { fixed: T::Hash[String, T.untyped] } }
 
       private_class_method :cache
 
-      sig { returns(String) }
-      def self.formula_endpoint
-        "internal/formula.#{SimulateSystem.current_tag}.jws.json"
+      sig { returns(Utils::Bottles::Tag) }
+      private_class_method def self.effective_tag
+        @effective_tag ||= T.let(SimulateSystem.current_tag, T.nilable(Utils::Bottles::Tag))
+      end
+
+      sig { returns(Utils::Bottles::Tag) }
+      private_class_method def self.fallback_tag
+        effective_tag
       end
 
       sig { returns(String) }
-      def self.cask_endpoint
-        "internal/cask.#{SimulateSystem.current_tag}.jws.json"
+      private_class_method def self.packages_endpoint
+        "internal/packages.#{effective_tag}.jws.json"
       end
 
-      sig { params(name: String).returns(Homebrew::FormulaStub) }
-      def self.formula_stub(name)
-        return cache["formula_stubs"][name] if cache.key?("formula_stubs") && cache["formula_stubs"].key?(name)
+      sig { params(name: String).returns(Homebrew::API::FormulaStruct) }
+      def self.formula_struct(name)
+        return cache["formula_structs"][name] if cache.key?("formula_structs") && cache["formula_structs"].key?(name)
 
-        stub_array = formula_arrays[name]
-        raise "No formula stub found for #{name}" unless stub_array
+        hash = formula_hashes[name]
+        raise "No formula found for #{name}" unless hash
 
-        aliases = formula_aliases.filter_map do |alias_name, original_name|
-          alias_name if original_name == name
-        end
+        struct = Homebrew::API::FormulaStruct.deserialize(hash, bottle_tag: effective_tag)
 
-        oldnames = formula_renames.filter_map do |oldname, newname|
-          oldname if newname == name
-        end
+        cache["formula_structs"] ||= {}
+        cache["formula_structs"][name] = struct
 
-        stub = Homebrew::FormulaStub.new(
-          name:           name,
-          pkg_version:    PkgVersion.parse(stub_array[0]),
-          version_scheme: stub_array[1],
-          rebuild:        stub_array[2],
-          sha256:         stub_array[3],
-          aliases:,
-          oldnames:,
-        )
-
-        cache["formula_stubs"] ||= {}
-        cache["formula_stubs"][name] = stub
-
-        stub
+        struct
       end
 
-      sig { returns(Pathname) }
-      def self.cached_formula_json_file_path
-        HOMEBREW_CACHE_API/formula_endpoint
+      sig { params(name: String).returns(Homebrew::API::CaskStruct) }
+      def self.cask_struct(name)
+        return cache["cask_structs"][name] if cache.key?("cask_structs") && cache["cask_structs"].key?(name)
+
+        hash = cask_hashes[name]
+        raise "No cask found for #{name}" unless hash
+
+        struct = Homebrew::API::CaskStruct.deserialize(hash)
+
+        cache["cask_structs"] ||= {}
+        cache["cask_structs"][name] = struct
+
+        struct
       end
 
       sig { returns(Pathname) }
-      def self.cached_cask_json_file_path
-        HOMEBREW_CACHE_API/cask_endpoint
+      def self.cached_packages_json_file_path
+        HOMEBREW_CACHE_API/packages_endpoint
       end
 
       sig {
-        params(download_queue: T.nilable(Homebrew::DownloadQueue), stale_seconds: T.nilable(Integer))
+        params(download_queue: DownloadQueueType, stale_seconds: T.nilable(Integer), enqueue: T::Boolean)
           .returns([T::Hash[String, T.untyped], T::Boolean])
       }
-      def self.fetch_formula_api!(download_queue: nil, stale_seconds: nil)
-        json_contents, updated = Homebrew::API.fetch_json_api_file(formula_endpoint, stale_seconds:, download_queue:)
-        [T.cast(json_contents, T::Hash[String, T.untyped]), updated]
-      end
+      def self.fetch_packages_api!(download_queue: nil, stale_seconds: nil, enqueue: false)
+        old_failed = Homebrew.failed?
+        json_contents, updated = begin
+          Homebrew::API.fetch_json_api_file(packages_endpoint, stale_seconds:, download_queue:, enqueue:)
+        rescue ErrorDuringExecution => e
+          raise if e.stderr.exclude?("HTTP status: 404") || effective_tag == fallback_tag
 
-      sig {
-        params(download_queue: T.nilable(Homebrew::DownloadQueue), stale_seconds: T.nilable(Integer))
-          .returns([T::Hash[String, T.untyped], T::Boolean])
-      }
-      def self.fetch_cask_api!(download_queue: nil, stale_seconds: nil)
-        json_contents, updated = Homebrew::API.fetch_json_api_file(cask_endpoint, stale_seconds:, download_queue:)
+          @effective_tag = fallback_tag
+          Homebrew.failed = old_failed
+          retry
+        end
+
         [T.cast(json_contents, T::Hash[String, T.untyped]), updated]
       end
 
       sig { returns(T::Boolean) }
-      def self.download_and_cache_formula_data!
-        json_contents, updated = fetch_formula_api!
-        cache["formula_stubs"] = {}
-        cache["formula_aliases"] = json_contents["aliases"]
-        cache["formula_renames"] = json_contents["renames"]
-        cache["formula_tap_migrations"] = json_contents["tap_migrations"]
-        cache["formula_arrays"] = json_contents["formulae"]
-
-        updated
-      end
-      private_class_method :download_and_cache_formula_data!
-
-      sig { returns(T::Boolean) }
-      def self.download_and_cache_cask_data!
-        json_contents, updated = fetch_cask_api!
-        cache["cask_stubs"] = {}
-        cache["cask_renames"] = json_contents["renames"]
-        cache["cask_tap_migrations"] = json_contents["tap_migrations"]
+      def self.download_and_cache_data!
+        json_contents, updated = fetch_packages_api!
+        cache["formula_structs"] = {}
+        cache["cask_structs"] = {}
+        cache["formula_aliases"] = json_contents["formula_aliases"]
+        cache["formula_renames"] = json_contents["formula_renames"]
+        cache["cask_renames"] = json_contents["cask_renames"]
+        cache["formula_tap_git_head"] = json_contents["formula_tap_git_head"]
+        cache["cask_tap_git_head"] = json_contents["cask_tap_git_head"]
+        cache["formula_tap_migrations"] = json_contents["formula_tap_migrations"]
+        cache["cask_tap_migrations"] = json_contents["cask_tap_migrations"]
+        cache["formula_hashes"] = json_contents["formulae"]
         cache["cask_hashes"] = json_contents["casks"]
 
         updated
       end
-      private_class_method :download_and_cache_cask_data!
+      private_class_method :download_and_cache_data!
 
       sig { params(regenerate: T::Boolean).void }
       def self.write_formula_names_and_aliases(regenerate: false)
-        download_and_cache_formula_data! unless cache.key?("formula_arrays")
+        download_and_cache_data! unless cache.key?("formula_hashes")
 
-        Homebrew::API.write_names_file!(formula_arrays.keys, "formula", regenerate:)
+        Homebrew::API.write_names_file!(formula_hashes.keys, "formula", regenerate:)
         Homebrew::API.write_aliases_file!(formula_aliases, "formula", regenerate:)
+        Homebrew::API.write_executables_file!(formula_hashes, regenerate:, source: cached_packages_json_file_path)
       end
 
       sig { params(regenerate: T::Boolean).void }
       def self.write_cask_names(regenerate: false)
-        download_and_cache_cask_data! unless cache.key?("cask_hashes")
+        download_and_cache_data! unless cache.key?("cask_hashes")
 
         Homebrew::API.write_names_file!(cask_hashes.keys, "cask", regenerate:)
       end
 
-      sig { returns(T::Hash[String, [String, Integer, Integer, T.nilable(String)]]) }
-      def self.formula_arrays
-        unless cache.key?("formula_arrays")
-          updated = download_and_cache_formula_data!
+      # Whether formula hashes are already loaded, so callers can use them
+      # opportunistically without triggering a download and full JSON parse.
+      sig { returns(T::Boolean) }
+      def self.formula_hashes_cached?
+        cache.key?("formula_hashes")
+      end
+
+      sig { returns(T::Hash[String, T::Hash[String, T.untyped]]) }
+      def self.formula_hashes
+        unless cache.key?("formula_hashes")
+          updated = download_and_cache_data!
           write_formula_names_and_aliases(regenerate: updated)
         end
 
-        cache["formula_arrays"]
+        cache["formula_hashes"]
       end
 
       sig { returns(T::Hash[String, String]) }
       def self.formula_aliases
         unless cache.key?("formula_aliases")
-          updated = download_and_cache_formula_data!
+          updated = download_and_cache_data!
           write_formula_names_and_aliases(regenerate: updated)
         end
 
@@ -147,7 +149,7 @@ module Homebrew
       sig { returns(T::Hash[String, String]) }
       def self.formula_renames
         unless cache.key?("formula_renames")
-          updated = download_and_cache_formula_data!
+          updated = download_and_cache_data!
           write_formula_names_and_aliases(regenerate: updated)
         end
 
@@ -157,17 +159,27 @@ module Homebrew
       sig { returns(T::Hash[String, String]) }
       def self.formula_tap_migrations
         unless cache.key?("formula_tap_migrations")
-          updated = download_and_cache_formula_data!
+          updated = download_and_cache_data!
           write_formula_names_and_aliases(regenerate: updated)
         end
 
         cache["formula_tap_migrations"]
       end
 
+      sig { returns(String) }
+      def self.formula_tap_git_head
+        unless cache.key?("formula_tap_git_head")
+          updated = download_and_cache_data!
+          write_formula_names_and_aliases(regenerate: updated)
+        end
+
+        cache["formula_tap_git_head"]
+      end
+
       sig { returns(T::Hash[String, T::Hash[String, T.untyped]]) }
       def self.cask_hashes
         unless cache.key?("cask_hashes")
-          updated = download_and_cache_cask_data!
+          updated = download_and_cache_data!
           write_cask_names(regenerate: updated)
         end
 
@@ -177,7 +189,7 @@ module Homebrew
       sig { returns(T::Hash[String, String]) }
       def self.cask_renames
         unless cache.key?("cask_renames")
-          updated = download_and_cache_cask_data!
+          updated = download_and_cache_data!
           write_cask_names(regenerate: updated)
         end
 
@@ -187,12 +199,24 @@ module Homebrew
       sig { returns(T::Hash[String, String]) }
       def self.cask_tap_migrations
         unless cache.key?("cask_tap_migrations")
-          updated = download_and_cache_cask_data!
+          updated = download_and_cache_data!
           write_cask_names(regenerate: updated)
         end
 
         cache["cask_tap_migrations"]
       end
+
+      sig { returns(String) }
+      def self.cask_tap_git_head
+        unless cache.key?("cask_tap_git_head")
+          updated = download_and_cache_data!
+          write_cask_names(regenerate: updated)
+        end
+
+        cache["cask_tap_git_head"]
+      end
     end
   end
 end
+
+require "extend/os/api/internal"

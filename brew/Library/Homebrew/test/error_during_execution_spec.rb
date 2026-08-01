@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 RSpec.describe ErrorDuringExecution do
@@ -11,14 +12,14 @@ RSpec.describe ErrorDuringExecution do
   describe "#initialize" do
     it "fails when only given a command" do
       expect do
-        described_class.new(command)
+        # Intentionally using T.unsafe to check runtime behaviour rather than static analysis
+        T.unsafe(described_class).new(command)
       end.to raise_error(ArgumentError)
     end
 
     it "fails when only given a status" do
-      expect do
-        described_class.new(status:)
-      end.to raise_error(ArgumentError)
+      # Intentionally using T.unsafe to check runtime behaviour rather than static analysis
+      expect { T.unsafe(described_class).new(status:) }.to raise_error(ArgumentError)
     end
 
     it "does not raise an error when given both a command and a status" do

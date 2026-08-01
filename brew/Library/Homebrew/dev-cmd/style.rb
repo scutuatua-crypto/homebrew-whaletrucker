@@ -5,6 +5,7 @@ require "abstract_command"
 require "json"
 require "open3"
 require "style"
+require "utils/git"
 
 module Homebrew
   module DevCmd
@@ -19,6 +20,10 @@ module Homebrew
         EOS
         switch "--fix",
                description: "Fix style violations automatically using RuboCop's auto-correct feature."
+        switch "--todo",
+               depends_on:  "--fix",
+               description: "Add `rubocop:todo` comments for RuboCop violations that remain after auto-correction. " \
+                            "Requires `--fix`."
         switch "--display-cop-names",
                description: "Include the RuboCop cop name for each violation in the output.",
                hidden:      true
@@ -69,6 +74,7 @@ module Homebrew
 
         options = {
           fix:         args.fix?,
+          todo:        args.todo?,
           reset_cache: args.reset_cache?,
           debug:       args.debug?,
           verbose:     args.verbose?,
@@ -81,19 +87,18 @@ module Homebrew
           options[:except_cops] = %w[FormulaAuditStrict]
         end
 
-        Homebrew.failed = !Style.check_style_and_print(target, **options)
+        Homebrew.failed = !Style.check_style_and_print(target || [], **options)
       end
 
       sig { returns(T::Array[Pathname]) }
       def changed_ruby_or_shell_files
-        repo = Utils.popen_read("git", "rev-parse", "--show-toplevel").chomp
+        repository = Utils.popen_read("git", "rev-parse", "--show-toplevel").chomp
         odie "`brew style --changed` must be run inside a git repository!" unless $CHILD_STATUS.success?
 
-        changed_files = Utils.popen_read("git", "diff", "--name-only", "--no-relative", "main")
-        changed_files.split("\n").filter_map do |file|
+        Utils::Git.changed_files(repository).filter_map do |file|
           next if !file.end_with?(".rb", ".sh", ".yml", ".rbi") && file != "bin/brew"
 
-          Pathname(file).expand_path(repo)
+          Pathname(file).expand_path(repository)
         end.select(&:exist?)
       end
     end

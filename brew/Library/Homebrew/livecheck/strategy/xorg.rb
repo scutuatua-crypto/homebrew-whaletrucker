@@ -43,14 +43,9 @@ module Homebrew
       class Xorg
         extend Strategic
 
-        NICE_NAME = "X.Org"
-
         # A `Regexp` used in determining if the strategy applies to the URL and
         # also as part of extracting the module name from the URL basename.
         MODULE_REGEX = /(?<module_name>.+)-\d+/i
-
-        # A `Regexp` used to extract the module name from the URL basename.
-        FILENAME_REGEX = /^#{MODULE_REGEX.source.strip}/i
 
         # The `Regexp` used to determine if the strategy applies to the URL.
         URL_MATCH_REGEX = %r{
@@ -61,9 +56,17 @@ module Homebrew
           /(?:[^/]+/)*#{MODULE_REGEX.source.strip}
         }ix
 
+        # A `Regexp` used to extract the module name from the URL basename.
+        FILENAME_REGEX = /^#{MODULE_REGEX.source.strip}/i
+
         # Used to cache page content, so we don't fetch the same pages
         # repeatedly.
         @page_data = T.let({}, T::Hash[String, String])
+
+        class << self
+          sig { params(page_data: T::Hash[String, String]).void }
+          attr_writer :page_data
+        end
 
         # Whether the strategy can be applied to the provided URL.
         #
@@ -112,27 +115,29 @@ module Homebrew
         # then this strategy can be brought in line with the others.
         #
         # @param url [String] the URL of the content to check
-        # @param regex [Regexp] a regex used for matching versions in content
+        # @param regex [Regexp, nil] a regex for matching versions in content
+        # @param content [String, nil] content to check instead of fetching
         # @param options [Options] options to modify behavior
         # @return [Hash]
         sig {
-          override(allow_incompatible: true).params(
+          override.params(
             url:     String,
             regex:   T.nilable(Regexp),
+            content: T.nilable(String),
             options: Options,
             block:   T.nilable(Proc),
           ).returns(T::Hash[Symbol, T.anything])
         }
-        def self.find_versions(url:, regex: nil, options: Options.new, &block)
+        def self.find_versions(url:, regex: nil, content: nil, options: Options.new, &block)
           generated = generate_input_values(url)
           generated_url = generated[:url]
 
           # Use the cached page content to avoid duplicate fetches
           cached_content = @page_data[generated_url]
           match_data = PageMatch.find_versions(
-            url:              generated_url,
-            regex:            regex || generated[:regex],
-            provided_content: cached_content,
+            url:     generated_url,
+            regex:   regex || generated[:regex],
+            content: content || cached_content,
             options:,
             &block
           )
@@ -140,7 +145,7 @@ module Homebrew
           return match_data if content.blank?
 
           # Cache any new page content
-          @page_data[generated_url] = content unless cached_content
+          @page_data[generated_url] = content
 
           match_data
         end

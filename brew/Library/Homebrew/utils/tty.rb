@@ -60,9 +60,13 @@ module Tty
       string.gsub(/\033\[\d+(;\d+)*m/, "")
     end
 
-    sig { params(line_count: Integer).returns(String) }
-    def move_cursor_up(line_count)
-      "\033[#{line_count}A"
+    # Simulates a terminal rendering `\r` overwrites (e.g. curl's `--progress-bar`).
+    sig { params(string: String).returns(String) }
+    def collapse_carriage_returns(string)
+      string.split("\n", -1).map do |line|
+        # `\r` resets the cursor, it doesn't erase, so keep the last non-empty segment.
+        line.split("\r", -1).reject(&:empty?).last || ""
+      end.join("\n")
     end
 
     sig { params(line_count: Integer).returns(String) }
@@ -95,6 +99,16 @@ module Tty
       "\033[?25h"
     end
 
+    sig { returns(String) }
+    def begin_synchronized_update
+      "\033[?2026h"
+    end
+
+    sig { returns(String) }
+    def end_synchronized_update
+      "\033[?2026l"
+    end
+
     sig { returns(T.nilable([Integer, Integer])) }
     def size
       return @size if defined?(@size)
@@ -110,6 +124,7 @@ module Tty
       @height ||= T.let(size&.first || `/usr/bin/tput lines 2>/dev/null`.presence&.to_i || 40, T.nilable(Integer))
     end
 
+    # Keep in sync with `columns` in Library/Homebrew/utils/tty.sh.
     sig { returns(Integer) }
     def width
       @width ||= T.let(size&.second || `/usr/bin/tput cols 2>/dev/null`.presence&.to_i || 80, T.nilable(Integer))

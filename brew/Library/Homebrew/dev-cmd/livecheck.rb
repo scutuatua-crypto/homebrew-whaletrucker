@@ -14,14 +14,18 @@ module Homebrew
           Check for newer versions of formulae and/or casks from upstream.
           If no formula or cask argument is passed, the list of formulae and
           casks to check is taken from `$HOMEBREW_LIVECHECK_WATCHLIST` or
-          `~/.homebrew/livecheck_watchlist.txt`.
+          `${XDG_CONFIG_HOME}/homebrew/livecheck_watchlist.txt` if
+          `$XDG_CONFIG_HOME` is set or `~/.homebrew/livecheck_watchlist.txt`
+          otherwise.
         EOS
         switch "--full-name",
                description: "Print formulae and casks with fully-qualified names."
         flag   "--tap=",
                description: "Check formulae and casks within the given tap, specified as <user>`/`<repo>."
         switch "--eval-all",
-               description: "Evaluate all available formulae and casks, whether installed or not, to check them."
+               description: "Evaluate all available formulae and casks, whether installed or not, to check them.",
+               env:         :eval_all,
+               odeprecated: true
         switch "--installed",
                description: "Check formulae and casks that are currently installed."
         switch "--newer-only",
@@ -54,50 +58,55 @@ module Homebrew
         Homebrew.install_bundler_gems!(groups: ["livecheck"])
 
         eval_all = args.eval_all?
+        eval_all ||= args.no_named? && Homebrew::EnvConfig.tap_trust_configured?
 
         if args.debug? && args.verbose?
           puts args
           puts Homebrew::EnvConfig.livecheck_watchlist if Homebrew::EnvConfig.livecheck_watchlist.present?
         end
 
-        formulae_and_casks_to_check = Homebrew.with_no_api_env do
-          if args.tap
-            tap = Tap.fetch(args.tap)
-            formulae = args.cask? ? [] : tap.formula_files.map { |path| Formulary.factory(path) }
-            casks = args.formula? ? [] : tap.cask_files.map { |path| Cask::CaskLoader.load(path) }
-            formulae + casks
-          elsif args.installed?
-            formulae = args.cask? ? [] : Formula.installed
-            casks = args.formula? ? [] : Cask::Caskroom.casks
-            formulae + casks
-          elsif args.named.present?
-            args.named.to_formulae_and_casks_with_taps
-          elsif eval_all
-            formulae = args.cask? ? [] : Formula.all(eval_all:)
-            casks = args.formula? ? [] : Cask::Cask.all(eval_all:)
-            formulae + casks
-          elsif File.exist?(watchlist_path)
-            begin
-              # This removes blank lines, comment lines, and trailing comments
-              names = Pathname.new(watchlist_path).read.lines
-                              .filter_map do |line|
-                                comment_index = line.index("#")
-                                next if comment_index&.zero?
+        formulae_and_casks_to_check = T.let(
+          Homebrew.with_no_api_env do
+            if args.tap
+              tap = Tap.fetch(args.tap)
+              formulae = args.cask? ? [] : tap.formula_files.map { |path| Formulary.factory(path) }
+              casks = args.formula? ? [] : tap.cask_files.map { |path| Cask::CaskLoader.load(path) }
+              formulae + casks
+            elsif args.installed?
+              formulae = args.cask? ? [] : Formula.installed
+              casks = args.formula? ? [] : Cask::Caskroom.casks
+              formulae + casks
+            elsif args.named.present?
+              args.named.to_formulae_and_casks_with_taps
+            elsif eval_all
+              formulae = args.cask? ? [] : Formula.all(eval_all:)
+              casks = args.formula? ? [] : Cask::Cask.all(eval_all:)
+              formulae + casks
+            elsif File.exist?(watchlist_path)
+              begin
+                # This removes blank lines, comment lines, and trailing comments
+                names = Pathname.new(watchlist_path).read.lines
+                                .filter_map do |line|
+                                  comment_index = line.index("#")
+                                  next if comment_index&.zero?
 
-                                line = line[0...comment_index] if comment_index
-                                line&.strip.presence
-                              end
+                                  line = line[0...comment_index] if comment_index
+                                  line&.strip.presence
+                                end
 
-              named_args = CLI::NamedArgs.new(*names, parent: args)
-              named_args.to_formulae_and_casks(ignore_unavailable: true)
-            rescue Errno::ENOENT => e
-              onoe e
+                named_args = CLI::NamedArgs.new(*names, parent: args)
+                named_args.to_formulae_and_casks(ignore_unavailable: true)
+              rescue Errno::ENOENT => e
+                onoe e
+              end
+            else
+              raise UsageError,
+                    "`brew livecheck` with no arguments needs a watchlist file, " \
+                    "`HOMEBREW_REQUIRE_TAP_TRUST=1` or `HOMEBREW_NO_REQUIRE_TAP_TRUST=1` set!"
             end
-          else
-            raise UsageError,
-                  "`brew livecheck` with no arguments needs a watchlist file to be present or `--eval-all` passed!"
-          end
-        end
+          end,
+          T::Array[T.any(Formula, Cask::Cask)],
+        )
 
         skipped_autobump = T.let(false, T::Boolean)
         if skip_autobump?
@@ -109,7 +118,7 @@ module Homebrew
 
             autobump_lists[tap] ||= tap.autobump
 
-            name = formula_or_cask.respond_to?(:token) ? formula_or_cask.token : formula_or_cask.name
+            name = Utils.name_or_token(formula_or_cask)
             next unless autobump_lists[tap].include?(name)
 
             odebug "Skipping #{name} as it is autobumped in #{tap}."
@@ -119,7 +128,7 @@ module Homebrew
         end
 
         formulae_and_casks_to_check = formulae_and_casks_to_check.sort_by do |formula_or_cask|
-          formula_or_cask.respond_to?(:token) ? formula_or_cask.token : formula_or_cask.name
+          Utils.name_or_token(formula_or_cask)
         end
 
         raise UsageError, "No formulae or casks to check." if formulae_and_casks_to_check.blank? && !skipped_autobump

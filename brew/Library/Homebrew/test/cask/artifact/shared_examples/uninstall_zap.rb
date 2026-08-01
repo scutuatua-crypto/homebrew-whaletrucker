@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "benchmark"
@@ -8,6 +9,10 @@ RSpec.shared_examples "#uninstall_phase or #zap_phase" do
   let(:artifact_dsl_key) { described_class.dsl_key }
   let(:artifact) { cask.artifacts.find { |a| a.is_a?(described_class) } }
   let(:fake_system_command) { class_double(SystemCommand) }
+
+  before do
+    allow(fake_system_command).to receive(:is_a?) { |val| SystemCommand.is_a?(val) }
+  end
 
   context "when using :launchctl" do
     let(:cask) { Cask::CaskLoader.load(cask_path("with-#{artifact_dsl_key}-launchctl")) }
@@ -181,9 +186,8 @@ RSpec.shared_examples "#uninstall_phase or #zap_phase" do
         .with("/bin/launchctl", args: ["list"])
         .and_return(instance_double(SystemCommand::Result, stdout: launchctl_list))
 
-      expect(subject.send(:find_launchctl_with_wildcard,
-                          "my.fancy.package.service.*")).to eq(["my.fancy.package.service.12345",
-                                                                "my.fancy.package.service.test"])
+      expect(subject.find_launchctl_with_wildcard("my.fancy.package.service.*"))
+        .to eq(["my.fancy.package.service.12345", "my.fancy.package.service.test"])
     end
   end
 
@@ -261,32 +265,18 @@ RSpec.shared_examples "#uninstall_phase or #zap_phase" do
       end.to output(/Application 'my.fancy.package.app' quit successfully\./).to_stdout
     end
 
-    it "does not attempt to quit when upgrading or reinstalling" do
-      next if artifact_dsl_key == :zap
-
-      allow(User.current).to receive(:gui?).and_return true
-
-      expect(subject).not_to receive(:running?)
-      expect(subject).not_to receive(:quit)
-
-      subject.public_send(:"#{artifact_dsl_key}_phase", upgrade: true, command: fake_system_command)
-      subject.public_send(:"#{artifact_dsl_key}_phase", reinstall: true, command: fake_system_command)
-    end
-
-    it "tries to quit the application for 10 seconds" do
+    it "tries to quit the application" do
       allow(User.current).to receive(:gui?).and_return true
 
       allow(subject).to receive(:running?).with(bundle_id).and_return(true)
       allow(subject).to receive(:quit).with(bundle_id)
                                       .and_return(instance_double(SystemCommand::Result, success?: false))
 
-      time = Benchmark.measure do
-        expect do
-          subject.public_send(:"#{artifact_dsl_key}_phase", command: fake_system_command)
-        end.to output(/Application 'my.fancy.package.app' did not quit\./).to_stderr
-      end
+      allow(Timeout).to receive(:timeout).and_raise(Timeout::Error)
 
-      expect(time.real).to be_within(3).of(10)
+      expect do
+        subject.public_send(:"#{artifact_dsl_key}_phase", command: fake_system_command)
+      end.to output(/Application 'my.fancy.package.app' did not quit\./).to_stderr
     end
   end
 
@@ -299,6 +289,7 @@ RSpec.shared_examples "#uninstall_phase or #zap_phase" do
     it "is supported" do
       allow(subject).to receive(:running_processes).with(bundle_id)
                                                    .and_return(unix_pids.map { |pid| [pid, 0, bundle_id] })
+      allow(subject).to receive(:sleep).with(3)
 
       signals.each do |signal|
         expect(Process).to receive(:kill).with(signal, *unix_pids).and_return(1)
@@ -366,7 +357,7 @@ RSpec.shared_examples "#uninstall_phase or #zap_phase" do
     end
   end
 
-  [:script, :early_script].each do |script_type|
+  test_each([:script, :early_script]) do |script_type|
     context "when using #{script_type.inspect}" do
       let(:fake_system_command) { NeverSudoSystemCommand }
       let(:token) { "with-#{artifact_dsl_key}-#{script_type}".tr("_", "-") }

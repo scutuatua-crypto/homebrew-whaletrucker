@@ -3,10 +3,8 @@
 
 require "abstract_command"
 require "formula"
-require "formula_versions"
 require "utils/curl"
 require "utils/github/actions"
-require "utils/shared_audits"
 require "utils/spdx"
 require "extend/ENV"
 require "formula_cellar_checks"
@@ -18,6 +16,7 @@ require "digest"
 require "json"
 require "formula_auditor"
 require "tap_auditor"
+require "utils/git"
 
 module Homebrew
   module DevCmd
@@ -43,16 +42,15 @@ module Homebrew
                description: "Only check formulae and casks that are currently installed."
         switch "--eval-all",
                description: "Evaluate all available formulae and casks, whether installed or not, to audit them.",
-               env:         :eval_all
+               env:         :eval_all,
+               odeprecated: true
         switch "--new",
                description: "Run various additional style checks to determine if a new formula or cask is eligible " \
                             "for Homebrew. This should be used when creating new formulae or casks and implies " \
                             "`--strict` and `--online`."
         switch "--[no-]signing",
-               description: "Audit for app signatures, which are required by macOS on ARM."
-        switch "--token-conflicts",
-               description: "Audit for token conflicts.",
-               hidden:      true
+               description: "Audit for app signatures, which are required by macOS on ARM.",
+               odeprecated: true
         switch "--changed",
                description: "Check files that were changed from the `main` branch."
         flag   "--tap=",
@@ -98,11 +96,11 @@ module Homebrew
 
       sig { override.void }
       def run
-        odisabled "`brew audit --token-conflicts`" if args.token_conflicts?
-
         Formulary.enable_factory_cache!
 
         os_arch_combinations = args.os_arch_combinations
+        cask_audit_os, cask_audit_arch =
+          os_arch_combinations.find { |os, _arch| os != :linux } || os_arch_combinations.fetch(0)
 
         Homebrew.auditing = true
         Homebrew.inject_dump_stats!(FormulaAuditor, /^audit_/) if args.audit_debug?
@@ -113,9 +111,10 @@ module Homebrew
         skip_style = args.skip_style? || args.no_named? || tap_audit
         no_named_args = T.let(false, T::Boolean)
 
-        gem_groups = ["audit"]
+        gem_groups = ["audit", "ast"]
         gem_groups << "style" unless skip_style
         Homebrew.install_bundler_gems!(groups: gem_groups)
+        require "utils/ast"
 
         ENV.activate_extensions!
         ENV.setup_build_environment
@@ -130,8 +129,7 @@ module Homebrew
             audit_formulae = []
             audit_casks = []
 
-            changed_files = Utils.popen_read("git", "diff", "--name-only", "--no-relative", "main")
-            changed_files.split("\n").each do |file|
+            Utils::Git.changed_files(tap.path).each do |file|
               next unless file.end_with?(".rb")
 
               absolute_file = File.expand_path(file, tap.path)
@@ -139,8 +137,8 @@ module Homebrew
 
               if tap.formula_file?(file)
                 audit_formulae << Formulary.factory(absolute_file)
-              elsif tap.cask_file?(file)
-                audit_casks << Cask::CaskLoader.load(absolute_file)
+              elsif tap.cask_file?(file) && (cask = cask_for_audit(absolute_file, cask_audit_os, cask_audit_arch))
+                audit_casks << cask
               end
             end
 
@@ -149,7 +147,7 @@ module Homebrew
             Tap.fetch(args.tap).then do |tap|
               [
                 tap.formula_files.map { |path| Formulary.factory(path) },
-                tap.cask_files.map { |path| Cask::CaskLoader.load(path) },
+                tap.cask_files.filter_map { |path| cask_for_audit(path, cask_audit_os, cask_audit_arch) },
               ]
             end
           elsif args.installed?
@@ -157,11 +155,12 @@ module Homebrew
             [Formula.installed, Cask::Caskroom.casks]
           elsif args.no_named?
             eval_all = args.eval_all?
+            eval_all ||= Homebrew::EnvConfig.tap_trust_configured?
 
             unless eval_all
               # This odisabled should probably stick around indefinitely.
               odisabled "`brew audit`",
-                        "`brew audit --eval-all` or set `HOMEBREW_EVAL_ALL=1`"
+                        "set `HOMEBREW_REQUIRE_TAP_TRUST=1`"
             end
             no_named_args = true
             [
@@ -199,7 +198,7 @@ module Homebrew
         elsif except_cops
           style_options[:except_cops] = except_cops
         elsif !strict
-          style_options[:except_cops] = [:FormulaAuditStrict]
+          style_options[:except_cops] = %w[FormulaAuditStrict]
         end
 
         # Run tap audits first
@@ -264,8 +263,6 @@ module Homebrew
           path = cask.sourcefile_path
 
           errors = os_arch_combinations.flat_map do |os, arch|
-            next [] if os == :linux
-
             SimulateSystem.with(os:, arch:) do
               odebug "Auditing Cask #{cask} on os #{os} and arch #{arch}"
 
@@ -281,7 +278,6 @@ module Homebrew
                 # because boolean switches are already `nil` if not passed
                 audit_signing:  args.signing?,
                 audit_new_cask: args.new? || nil,
-                quarantine:     true,
                 any_named_args: !no_named_args,
                 only:           args.only || [],
                 except:         args.except || [],
@@ -349,7 +345,38 @@ module Homebrew
 
       private
 
-      sig { params(results: T::Hash[[Symbol, Pathname], T::Array[T::Hash[Symbol, T.untyped]]]).void }
+      sig {
+        params(
+          path:            T.any(String, Pathname),
+          cask_audit_os:   Symbol,
+          cask_audit_arch: Symbol,
+        ).returns(T.nilable(Cask::Cask))
+      }
+      def cask_for_audit(path, cask_audit_os, cask_audit_arch)
+        if cask_audit_os == :linux
+          return if Utils::AST::CaskAST.new(Pathname(path).read).depends_on_macos?
+
+          cask = SimulateSystem.with(os: :macos, arch: cask_audit_arch) do
+            loaded_cask = Cask::CaskLoader.load(path)
+            loaded_cask if loaded_cask.supports_linux?
+          end
+          return unless cask
+
+          SimulateSystem.with(os: :linux, arch: cask_audit_arch) { cask.refresh }
+          return cask
+        end
+
+        SimulateSystem.with(os: cask_audit_os, arch: cask_audit_arch) { Cask::CaskLoader.load(path) }
+      end
+
+      sig {
+        params(
+          results: T::Hash[
+            T::Array[T.any(String, Pathname)],
+            T::Array[T::Hash[Symbol, T.untyped]],
+          ],
+        ).void
+      }
       def print_problems(results)
         results.each do |(name, path), problems|
           problem_lines = format_problem_lines(problems)

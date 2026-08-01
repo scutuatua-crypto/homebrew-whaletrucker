@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "utils/path"
+
 module Language
   # Helper functions for Perl formulae.
   #
@@ -36,7 +38,7 @@ module Language
         raise ShebangDetectionError.new("Perl", "formula does not depend on Perl") if perl_deps.empty?
 
         perl_path = if perl_deps.any? { |dep| !dep.uses_from_macos? || !dep.use_macos_install? }
-          Formula["perl"].opt_bin/"perl"
+          Utils::Path.formula_opt_bin("perl")/"perl"
         else
           "/usr/bin/perl#{MacOS.preferred_perl_version}"
         end

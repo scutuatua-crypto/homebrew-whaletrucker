@@ -3,12 +3,14 @@
 
 require "service"
 require "utils/spdx"
+require "install_steps"
 
 module Homebrew
   module API
     class FormulaStruct < T::Struct
       sig { params(formula_hash: T::Hash[String, T.untyped]).returns(FormulaStruct) }
       def self.from_hash(formula_hash)
+        formula_hash = ::Formula.deep_remove_placeholders(formula_hash)
         formula_hash = formula_hash.transform_keys(&:to_sym)
                                    .slice(*decorator.all_props)
                                    .compact_blank
@@ -21,7 +23,7 @@ module Homebrew
         :disable,
         :head,
         :keg_only,
-        :no_autobump_message,
+        :no_autobump,
         :pour_bottle,
         :service,
         :service_run,
@@ -29,25 +31,32 @@ module Homebrew
         :stable,
       ].freeze
 
-      # `:codesign` and custom requirement classes are not supported.
-      API_SUPPORTED_REQUIREMENTS = [:arch, :linux, :macos, :maximum_macos, :xcode].freeze
-      private_constant :API_SUPPORTED_REQUIREMENTS
+      SKIP_SERIALIZATION = [
+        # Bottle checksums have special serialization done by the serialize_bottle method
+        :bottle_checksums,
+      ].freeze
 
-      DependencyArgs = T.type_alias do
-        T.any(
-          # Formula name: "foo"
-          String,
-          # Formula name and dependency type: { "foo" => :build }
-          T::Hash[String, Symbol],
-        )
-      end
+      SPECS = [:head, :stable].freeze
 
-      RequirementArgs = T.type_alias do
+      # :any_skip_relocation is the most common in homebrew/core
+      DEFAULT_CELLAR = :any_skip_relocation
+
+      DependsOnArgs = T.type_alias do
         T.any(
-          # Requirement name: :macos
-          Symbol,
-          # Requirement name and other info: { macos: :build }
-          T::Hash[Symbol, T::Array[T.anything]],
+          # Dependencies
+          T.any(
+            # Formula name: "foo"
+            String,
+            # Formula name and dependency type: { "foo" => :build }
+            T::Hash[String, Symbol],
+          ),
+          # Requirements
+          T.any(
+            # Requirement name: :macos
+            Symbol,
+            # Requirement name and other info: { macos: :build }
+            T::Hash[Symbol, T::Array[T.anything]],
+          ),
         )
       end
 
@@ -65,25 +74,6 @@ module Homebrew
         ]
       end
 
-      DependencyHash = T.type_alias do
-        T::Hash[
-          # Keys are strings of the dependency type (e.g. "dependencies", "build_dependencies")
-          String,
-          # Values are arrays of either:
-          T::Array[
-            T.any(
-              # Formula name: "foo"
-              String,
-              # Hash like { "foo" => "build" } or { :foo => ["build", "test"] }
-              T::Hash[
-                String,
-                T.any(String, T::Array[String]),
-              ],
-            ),
-          ],
-        ]
-      end
-
       PREDICATES.each do |predicate_name|
         present_method_name = :"#{predicate_name}_present"
         predicate_method_name = :"#{predicate_name}?"
@@ -97,132 +87,167 @@ module Homebrew
 
       # Changes to this struct must be mirrored in Homebrew::API::Formula.generate_formula_struct_hash
       const :aliases, T::Array[String], default: []
-      const :bottle, T::Hash[String, T.anything], default: {}
-      const :bottle_checksums, T::Array[T::Hash[Symbol, T.anything]], default: []
+      const :bottle_checksums, T::Array[T::Hash[Symbol, T.any(String, Symbol)]], default: []
       const :bottle_rebuild, Integer, default: 0
       const :caveats, T.nilable(String)
       const :conflicts, T::Array[[String, T::Hash[Symbol, String]]], default: []
       const :deprecate_args, T::Hash[Symbol, T.nilable(T.any(String, Symbol))], default: {}
       const :desc, String
       const :disable_args, T::Hash[Symbol, T.nilable(T.any(String, Symbol))], default: {}
-      const :head_url_args, [String, T::Hash[Symbol, T.anything]]
+      const :executables, T::Array[String], default: []
+      const :head_dependencies, T::Array[DependsOnArgs], default: []
+      const :head_url_args, [String, T::Hash[Symbol, T.anything]], default: ["", {}]
+      const :head_uses_from_macos, T::Array[UsesFromMacOSArgs], default: []
       const :homepage, String
       const :keg_only_args, T::Array[T.any(String, Symbol)], default: []
       const :license, SPDX::LicenseExpression
       const :link_overwrite_paths, T::Array[String], default: []
       const :no_autobump_args, T::Hash[Symbol, T.any(String, Symbol)], default: {}
       const :oldnames, T::Array[String], default: []
-      const :post_install_defined, T::Boolean, default: true
+      const :post_install_defined, T::Boolean, default: false
+      const :post_install_steps, Homebrew::InstallSteps::Steps, default: []
       const :pour_bottle_args, T::Hash[Symbol, Symbol], default: {}
       const :revision, Integer, default: 0
       const :ruby_source_checksum, String
-      const :ruby_source_path, String
       const :service_args, T::Array[[Symbol, BasicObject]], default: []
       const :service_name_args, T::Hash[Symbol, String], default: {}
       const :service_run_args, T::Array[Homebrew::Service::RunParam], default: []
       const :service_run_kwargs, T::Hash[Symbol, Homebrew::Service::RunParam], default: {}
+      const :stable_dependencies, T::Array[DependsOnArgs], default: []
+      const :stable_patches, T::Array[T::Hash[T.any(String, Symbol), T.untyped]], default: []
       const :stable_checksum, T.nilable(String)
-      const :stable_url_args, [String, T::Hash[Symbol, T.anything]]
+      const :stable_url_args, [String, T::Hash[Symbol, T.anything]], default: ["", {}]
+      const :stable_uses_from_macos, T::Array[UsesFromMacOSArgs], default: []
       const :stable_version, String
-      const :tap_git_head, String
       const :version_scheme, Integer, default: 0
       const :versioned_formulae, T::Array[String], default: []
 
-      sig { returns(T::Array[T.any(DependencyArgs, RequirementArgs)]) }
-      def head_dependencies
-        spec_dependencies(:head) + spec_requirements(:head)
-      end
-
-      sig { returns(T::Array[T.any(DependencyArgs, RequirementArgs)]) }
-      def stable_dependencies
-        spec_dependencies(:stable) + spec_requirements(:stable)
-      end
-
-      sig { returns(T::Array[UsesFromMacOSArgs]) }
-      def head_uses_from_macos
-        spec_uses_from_macos(:head)
-      end
-
-      sig { returns(T::Array[UsesFromMacOSArgs]) }
-      def stable_uses_from_macos
-        spec_uses_from_macos(:stable)
-      end
-
-      private
-
-      const :stable_dependency_hash, DependencyHash, default: {}
-      const :head_dependency_hash, DependencyHash, default: {}
-      const :requirements_array, T::Array[T::Hash[String, T.untyped]], default: []
-
-      sig { params(spec: Symbol).returns(T::Array[DependencyArgs]) }
-      def spec_dependencies(spec)
-        deps_hash = send("#{spec}_dependency_hash")
-        dependencies = deps_hash.fetch("dependencies", [])
-        dependencies + [:build, :test, :recommended, :optional].filter_map do |type|
-          deps_hash["#{type}_dependencies"]&.map do |dep|
-            { dep => type }
-          end
-        end.flatten(1)
-      end
-
-      sig { params(spec: Symbol).returns(T::Array[UsesFromMacOSArgs]) }
-      def spec_uses_from_macos(spec)
-        deps_hash = send("#{spec}_dependency_hash")
-        zipped_array = deps_hash["uses_from_macos"]&.zip(deps_hash["uses_from_macos_bounds"])
-        return [] unless zipped_array
-
-        zipped_array.map do |entry, bounds|
-          bounds ||= {}
-          bounds = bounds.transform_keys(&:to_sym).transform_values(&:to_sym)
-
-          if entry.is_a?(Hash)
-            # The key is the dependency name, the value is the dep type. Only the type should be a symbol
-            entry = entry.deep_transform_values(&:to_sym)
-            # When passing both a dep type and bounds, uses_from_macos expects them both in the first argument
-            entry = entry.merge(bounds)
-            [entry, {}]
-          else
-            [entry, bounds]
-          end
+      sig { params(other: T.anything).returns(T::Boolean) }
+      def ==(other)
+        case other
+        when FormulaStruct
+          serialize == other.serialize
+        else
+          false
         end
       end
 
-      sig { params(spec: Symbol).returns(T::Array[RequirementArgs]) }
-      def spec_requirements(spec)
-        requirements_array.filter_map do |req|
-          next unless req["specs"].include?(spec.to_s)
+      sig { params(bottle_tag: ::Utils::Bottles::Tag).returns(T.nilable(T::Hash[String, T.untyped])) }
+      def serialize_bottle(bottle_tag: ::Utils::Bottles.tag)
+        bottle_collector = ::Utils::Bottles::Collector.new
+        bottle_checksums.each do |bottle_info|
+          bottle_info = bottle_info.dup
+          cellar = bottle_info.delete(:cellar) || :any
+          tag = T.must(bottle_info.keys.first)
+          checksum = T.cast(bottle_info.values.first, String)
 
-          req_name = req["name"].to_sym
-          next if API_SUPPORTED_REQUIREMENTS.exclude?(req_name)
+          bottle_collector.add(
+            ::Utils::Bottles::Tag.from_symbol(tag),
+            checksum: Checksum.new(checksum),
+            cellar:,
+          )
+        end
+        return unless (bottle_spec = bottle_collector.specification_for(bottle_tag))
 
-          req_version = case req_name
-          when :arch
-            req["version"]&.to_sym
-          when :macos, :maximum_macos
-            MacOSVersion::SYMBOLS.key(req["version"])
+        tag = (bottle_spec.tag if bottle_spec.tag != bottle_tag)
+        cellar = (bottle_spec.cellar if bottle_spec.cellar != DEFAULT_CELLAR)
+
+        {
+          "bottle_tag"      => tag&.to_sym,
+          "bottle_cellar"   => cellar,
+          "bottle_checksum" => bottle_spec.checksum.to_s,
+        }
+      end
+
+      sig { params(bottle_tag: ::Utils::Bottles::Tag).returns(T::Hash[String, T.untyped]) }
+      def serialize(bottle_tag: ::Utils::Bottles.tag)
+        hash = self.class.decorator.all_props.filter_map do |prop|
+          next if PREDICATES.any? { |predicate| prop == :"#{predicate}_present" }
+          next if SKIP_SERIALIZATION.include?(prop)
+
+          [prop.to_s, send(prop)]
+        end.to_h
+
+        if (bottle_hash = serialize_bottle(bottle_tag:))
+          hash = hash.merge(bottle_hash)
+        end
+
+        hash = ::Utils.deep_stringify_symbols(hash)
+
+        service_args = hash["service_args"]
+        hash = ::Utils.deep_compact_blank(hash)
+
+        # service_args may have falsey values that we don't want to remove, like `keep_alive successful_exit: false`
+        hash["service_args"] = service_args if service_args&.any?
+
+        hash
+      end
+
+      sig { params(hash: T::Hash[String, T.untyped], bottle_tag: ::Utils::Bottles::Tag).returns(FormulaStruct) }
+      def self.deserialize(hash, bottle_tag: ::Utils::Bottles.tag)
+        hash = ::Utils.deep_unstringify_symbols(hash)
+
+        # Items that don't follow the `hash["foo_present"] = hash["foo_args"].present?` pattern are overridden below
+        PREDICATES.each do |name|
+          hash["#{name}_present"] = hash["#{name}_args"].present?
+        end
+
+        if (bottle_checksum = hash["bottle_checksum"])
+          tag = hash.fetch("bottle_tag", bottle_tag.to_sym)
+          cellar = hash.fetch("bottle_cellar", DEFAULT_CELLAR)
+
+          hash["bottle_present"] = true
+          hash["bottle_checksums"] = [{ cellar: cellar, tag => bottle_checksum }]
+        else
+          hash["bottle_present"] = false
+        end
+
+        # *_url_args need to be in [String, Hash] format, but the hash may have been dropped if empty
+        SPECS.each do |key|
+          if (url_args = hash["#{key}_url_args"])
+            hash["#{key}_present"] = true
+            hash["#{key}_url_args"] = format_arg_pair(url_args, last: {})
           else
-            req["version"]
+            hash["#{key}_present"] = false
           end
 
-          req_tags = []
-          req_tags << req_version if req_version.present?
-          req_tags += req["contexts"]&.map do |tag|
-            case tag
-            when String
-              tag.to_sym
-            when Hash
-              tag.deep_transform_keys(&:to_sym)
-            else
-              tag
-            end
-          end
+          next unless (uses_from_macos = hash["#{key}_uses_from_macos"])
 
-          if req_tags.empty?
-            req_name
-          else
-            { req_name => req_tags }
+          hash["#{key}_uses_from_macos"] = uses_from_macos.map do |args|
+            format_arg_pair(args, last: {})
           end
         end
+
+        hash["conflicts"] = if (conflicts = hash["conflicts"])
+          conflicts.map { |conflict| format_arg_pair(conflict, last: {}) }
+        end
+
+        from_hash(hash)
+      end
+
+      # Format argument pairs into proper [first, last] format if serialization has removed some elements.
+      # Pass a default value for last to be used when only one element is present.
+      #
+      #  format_arg_pair(["foo"], last: {})                       # => ["foo", {}]
+      #  format_arg_pair([{ "foo" => :build }], last: {})         # => [{ "foo" => :build }, {}]
+      #  format_arg_pair(["foo", { since: :catalina }], last: {}) # => ["foo", { since: :catalina }]
+      sig {
+        type_parameters(:U, :V)
+          .params(
+            args: T.any([T.type_parameter(:U)], [T.type_parameter(:U), T.type_parameter(:V)]),
+            last: T.type_parameter(:V),
+          ).returns([T.type_parameter(:U), T.type_parameter(:V)])
+      }
+      def self.format_arg_pair(args, last:)
+        args = case args
+        in [elem]
+          [elem, last]
+        in [elem1, elem2]
+          [elem1, elem2]
+        end
+
+        # The case above is exhaustive so args will never be nil, but sorbet cannot infer that.
+        T.must(args)
       end
     end
   end

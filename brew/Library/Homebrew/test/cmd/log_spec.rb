@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "cmd/log"
@@ -19,7 +20,7 @@ RSpec.describe Homebrew::Cmd::Log do
     core_tap_url = "file://#{core_tap.path}"
     shallow_tap = Tap.fetch("homebrew", "shallow")
 
-    system "git", "clone", "--depth=1", core_tap_url, shallow_tap.path
+    system "git", "clone", "--depth=1", core_tap_url, shallow_tap.path.to_s
 
     expect { brew "log", "#{shallow_tap}/testball" }
       .to output(/This is a test commit for Testball/).to_stdout

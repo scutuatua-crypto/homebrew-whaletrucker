@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "utils/autoremove"
@@ -6,6 +7,7 @@ RSpec.describe Utils::Autoremove do
   shared_context "with formulae for dependency testing" do
     let(:formula_with_deps) do
       formula "zero" do
+        T.bind(self, T.class_of(Formula))
         url "zero-1.0"
 
         depends_on "three" => :build
@@ -14,18 +16,21 @@ RSpec.describe Utils::Autoremove do
 
     let(:first_formula_dep) do
       formula "one" do
+        T.bind(self, T.class_of(Formula))
         url "one-1.1"
       end
     end
 
     let(:second_formula_dep) do
       formula "two" do
+        T.bind(self, T.class_of(Formula))
         url "two-1.1"
       end
     end
 
     let(:formula_is_build_dep) do
       formula "three" do
+        T.bind(self, T.class_of(Formula))
         url "three-1.1"
       end
     end
@@ -42,6 +47,7 @@ RSpec.describe Utils::Autoremove do
     let(:tab_from_keg) { instance_double(Tab) }
 
     before do
+      allow(tab_from_keg).to receive(:runtime_dependencies).and_return(nil)
       allow(formula_with_deps).to receive_messages(
         installed_runtime_formula_dependencies: [first_formula_dep, second_formula_dep],
         any_installed_keg:                      instance_double(Keg, tab: tab_from_keg),
@@ -73,7 +79,7 @@ RSpec.describe Utils::Autoremove do
       it "filters out runtime dependencies" do
         allow(tab_from_keg).to receive(:poured_from_bottle).and_return(true)
 
-        expect(described_class.send(:bottled_formulae_with_no_formula_dependents, formulae))
+        expect(described_class.bottled_formulae_with_no_formula_dependents(formulae))
           .to eq([formula_with_deps, formula_is_build_dep])
       end
     end
@@ -82,8 +88,22 @@ RSpec.describe Utils::Autoremove do
       it "filters out formulae" do
         allow(tab_from_keg).to receive(:poured_from_bottle).and_return(false)
 
-        expect(described_class.send(:bottled_formulae_with_no_formula_dependents, formulae))
+        expect(described_class.bottled_formulae_with_no_formula_dependents(formulae))
           .to eq([])
+      end
+    end
+
+    context "when tab has runtime_dependencies data" do
+      it "uses tab dep names without calling installed_runtime_formula_dependencies" do
+        allow(tab_from_keg).to receive_messages(
+          runtime_dependencies: [{ "full_name" => "one" }, { "full_name" => "two" }], poured_from_bottle: true,
+        )
+
+        expect(formula_with_deps).not_to receive(:installed_runtime_formula_dependencies)
+        expect(first_formula_dep).not_to receive(:installed_runtime_formula_dependencies)
+
+        expect(described_class.bottled_formulae_with_no_formula_dependents(formulae))
+          .to eq([formula_with_deps, formula_is_build_dep])
       end
     end
   end
@@ -98,21 +118,21 @@ RSpec.describe Utils::Autoremove do
     specify "installed on request" do
       allow(tab_from_keg).to receive_messages(installed_on_request: true, installed_on_request_present?: true)
 
-      expect(described_class.send(:unused_formulae_with_no_formula_dependents, formulae))
+      expect(described_class.unused_formulae_with_no_formula_dependents(formulae))
         .to eq([])
     end
 
     specify "not installed on request" do
       allow(tab_from_keg).to receive_messages(installed_on_request: false, installed_on_request_present?: true)
 
-      expect(described_class.send(:unused_formulae_with_no_formula_dependents, formulae))
+      expect(described_class.unused_formulae_with_no_formula_dependents(formulae))
         .to match_array(formulae)
     end
 
     specify "installed on request is null" do
       allow(tab_from_keg).to receive_messages(installed_on_request: false, installed_on_request_present?: false)
 
-      expect(described_class.send(:unused_formulae_with_no_formula_dependents, formulae))
+      expect(described_class.unused_formulae_with_no_formula_dependents(formulae))
         .to eq([])
     end
   end
@@ -155,30 +175,24 @@ RSpec.describe Utils::Autoremove do
     let(:casks_no_deps) { [first_cask_no_deps, second_cask_no_deps] }
     let(:casks_one_dep) { [first_cask_no_deps, second_cask_no_deps, cask_one_dep] }
     let(:casks_multiple_deps) { [first_cask_no_deps, second_cask_no_deps, cask_multiple_deps] }
-
-    before do
-      allow(Formulary).to receive(:resolve).with("zero").and_return(formula_with_deps)
-      allow(Formulary).to receive(:resolve).with("one").and_return(first_formula_dep)
-      allow(Formulary).to receive(:resolve).with("two").and_return(second_formula_dep)
-    end
   end
 
-  describe "::formulae_with_cask_dependents" do
+  describe "::cask_dependent_formula_names" do
     include_context "with formulae and casks for dependency testing"
 
     specify "no dependents" do
-      expect(described_class.send(:formulae_with_cask_dependents, casks_no_deps))
-        .to eq([])
+      expect(described_class.cask_dependent_formula_names(casks_no_deps, formulae))
+        .to eq(Set.new)
     end
 
     specify "one dependent" do
-      expect(described_class.send(:formulae_with_cask_dependents, casks_one_dep))
-        .to eq([second_formula_dep])
+      expect(described_class.cask_dependent_formula_names(casks_one_dep, formulae))
+        .to contain_exactly("two")
     end
 
     specify "multiple dependents" do
-      expect(described_class.send(:formulae_with_cask_dependents, casks_multiple_deps))
-        .to contain_exactly(formula_with_deps, first_formula_dep, second_formula_dep)
+      expect(described_class.cask_dependent_formula_names(casks_multiple_deps, formulae))
+        .to contain_exactly("zero", "one", "two")
     end
   end
 end

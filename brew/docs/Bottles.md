@@ -1,5 +1,5 @@
 ---
-last_review_date: "1970-01-01"
+last_review_date: "2026-07-18"
 ---
 
 # Bottles (Binary Packages)
@@ -10,25 +10,32 @@ Bottles are produced by installing a formula with `brew install --build-bottle <
 
 When the formula being installed defines a bottle matching your system, it will be downloaded and installed automatically when you run `brew install <formula>`.
 
-Bottles will not be used if:
+Bottles are not used when:
 
 - the user requests it (by specifying `--build-from-source`),
 - the formula requests it (with `pour_bottle?`),
 - any options are specified during installation (bottles are all compiled with default options),
 - the bottle is not up to date (e.g. missing or mismatched checksum),
-- or the bottle's `cellar` is neither `:any` (it requires being installed to a specific Cellar path) nor equal to the current `HOMEBREW_CELLAR` (the required Cellar path does not match that of the current Homebrew installation).
+- the bottle's `cellar` is neither relocatable nor equal to the current `HOMEBREW_CELLAR`.
 
 ## Creation
 
 Bottles for `homebrew/core` formulae are created by [BrewTestBot](BrewTestBot.md) when a pull request is submitted. If the formula builds successfully on each supported platform and a maintainer approves the change, BrewTestBot updates its `bottle do` block and uploads each bottle to [GitHub Packages](https://github.com/orgs/Homebrew/packages).
 
-By default, bottles will be built for the oldest CPU supported by the OS/architecture you're building for (Core 2 for 64-bit x86 operating systems). This ensures that bottles are compatible with all computers you might distribute them to. If you *really* want your bottles to be optimised for something else, you can pass the `--bottle-arch=` option to build for another architecture; for example, `brew install foo --build-bottle --bottle-arch=penryn`. Just remember that if you build for a newer architecture, some of your users might get binaries they can't run and that would be sad!
+By default, Homebrew targets the oldest CPU generation supported for the operating system and architecture being bottled.
+For 64-bit x86 builds, the baseline is Core 2 unless the platform definition specifies a newer minimum.
+This makes the bottle usable across the supported hardware range.
+
+Use `--bottle-arch=` only when the formula intentionally requires another architecture and its compatibility has been reviewed.
+A bottle built for a newer CPU can fail with an illegal-instruction error on older supported hardware.
 
 ## Format
 
-Bottles are simple gzipped tarballs of compiled binaries. The formula name, version, target operating system and rebuild version is stored in the filename, any other metadata is in the formula's bottle DSL, and the formula definition is located within the bottle at `<formula>/<version>/.brew/<formula>.rb`.
+Bottles are simple gzipped tarballs of compiled binaries.
+The formula name, version, target operating system and rebuild version are stored in the filename.
+Other metadata is in the formula's bottle DSL, and the formula definition is located within the bottle at `<formula>/<version>/.brew/<formula>.rb`.
 
-## Bottle DSL (Domain Specific Language)
+## Bottle DSL (domain specific language)
 
 Bottles are specified in formula definitions by a DSL contained within a `bottle do ... end` block.
 
@@ -54,6 +61,8 @@ bottle do
 end
 ```
 
+Use the `all:` tag for a platform-independent bottle whose contents are identical and usable on every supported operating system and architecture.
+
 ### Root URL (`root_url`)
 
 Optionally contains the URL root used to determine bottle URLs.
@@ -70,7 +79,8 @@ Most compiled software contains references to its compiled location, preventing 
 
 Optionally contains the rebuild version of the bottle.
 
-Sometimes bottles may need be updated without bumping the version or revision of the formula, e.g. if a new patch was applied. In such cases `rebuild` will have a value of `1` or more.
+Sometimes a bottle must be updated without changing the formula version or revision, such as after a bottle-only packaging correction.
+In that case `rebuild` has a value of `1` or greater.
 
 ### Checksum (`sha256`)
 

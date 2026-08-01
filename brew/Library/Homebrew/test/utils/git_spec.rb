@@ -1,8 +1,19 @@
+# typed: false
 # frozen_string_literal: true
 
 require "utils/git"
 
 RSpec.describe Utils::Git do
+  let(:file) { "README.md" }
+  # Allow instance variables here for a simpler `before do` block.
+  # rubocop:disable RSpec/InstanceVariable
+  let(:file_hash_one) { @h1[0..6] }
+  let(:file_hash_two) { @h2[0..6] }
+  let(:files) { ["README.md", "LICENSE.txt"] }
+  let(:files_hash_one) { [@h3[0..6], ["LICENSE.txt"]] }
+  let(:files_hash_two) { [@h2[0..6], ["README.md"]] }
+  let(:cherry_pick_commit) { @cherry_pick_commit[0..6] }
+
   around do |example|
     described_class.clear_available_cache
     example.run
@@ -43,15 +54,6 @@ RSpec.describe Utils::Git do
     end
   end
 
-  let(:file) { "README.md" }
-  # Allow instance variables here for a simpler `before do` block.
-  # rubocop:disable RSpec/InstanceVariable
-  let(:file_hash_one) { @h1[0..6] }
-  let(:file_hash_two) { @h2[0..6] }
-  let(:files) { ["README.md", "LICENSE.txt"] }
-  let(:files_hash_one) { [@h3[0..6], ["LICENSE.txt"]] }
-  let(:files_hash_two) { [@h2[0..6], ["README.md"]] }
-  let(:cherry_pick_commit) { @cherry_pick_commit[0..6] }
   # rubocop:enable RSpec/InstanceVariable
 
   describe "#cherry_pick!" do
@@ -91,6 +93,20 @@ RSpec.describe Utils::Git do
     it "returns empty when file doesn't exist" do
       expect(described_class.file_at_commit(HOMEBREW_CACHE, "foo.txt", file_hash_one)).to eq("")
       expect(described_class.file_at_commit(HOMEBREW_CACHE, "LICENSE.txt", file_hash_one)).to eq("")
+    end
+  end
+
+  describe "::changed_files" do
+    it "diffs against the `origin/HEAD` merge-base, ignoring a stale local default branch" do
+      git = HOMEBREW_SHIMS_PATH/"shared/git"
+      HOMEBREW_CACHE.cd do
+        system git, "checkout", "--quiet", "-b", "feature"
+        system git, "update-ref", "refs/remotes/origin/HEAD", "HEAD" # up-to-date upstream
+        system git, "branch", "--force", "main", "HEAD~2" # stale local default branch
+        File.write("README.md", "changed")
+      end
+
+      expect(described_class.changed_files(HOMEBREW_CACHE)).to eq(["README.md"])
     end
   end
 
@@ -179,20 +195,27 @@ RSpec.describe Utils::Git do
       end
 
       it "raises error if can't install git" do
-        stub_const("HOMEBREW_BREW_FILE", HOMEBREW_PREFIX/"bin/brew")
+        allow(CoreTap.instance).to receive(:installed?).and_return(true)
+        formula_double = instance_double(Formula)
+        allow(Formula).to receive(:[]).with("git").and_return(formula_double)
+        allow(formula_double).to receive(:ensure_installed!).with(executable: "git").and_raise(RuntimeError)
+
         expect { described_class.ensure_installed! }.to raise_error("Git is unavailable")
       end
 
       unless ENV["HOMEBREW_TEST_GENERIC_OS"]
-        it "installs git" do
+        it "keeps using the git shim after the formula install helper" do
           expect(described_class).to receive(:available?).and_return(false)
           allow(CoreTap.instance).to receive(:installed?).and_return(true)
           formula_double = instance_double(Formula)
           allow(Formula).to receive(:[]).with("git").and_return(formula_double)
-          allow(formula_double).to receive(:ensure_installed!).and_return(formula_double)
+          allow(formula_double).to receive(:ensure_installed!).with(executable: "git")
+                                                              .and_return(Pathname.new("/usr/bin/git"))
           expect(described_class).to receive(:available?).and_return(true)
 
           described_class.ensure_installed!
+
+          expect(described_class.git).to eq(HOMEBREW_SHIMS_PATH/"shared/git")
         end
       end
     end
@@ -205,6 +228,14 @@ RSpec.describe Utils::Git do
     end
 
     context "when git is available" do
+      it "terminates options before the URL" do
+        expect(described_class).to receive(:quiet_system)
+          .with("git", "ls-remote", "--end-of-options", "-u:evil")
+          .and_return(false)
+
+        described_class.remote_exists?("-u:evil")
+      end
+
       it "returns true when git remote exists", :needs_network do
         git = HOMEBREW_SHIMS_PATH/"shared/git"
         url = "https://github.com/Homebrew/homebrew.github.io"

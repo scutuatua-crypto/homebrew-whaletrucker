@@ -9,11 +9,19 @@ module Context
 
   # Struct describing the current execution context.
   class ContextStruct
-    sig { params(debug: T.nilable(T::Boolean), quiet: T.nilable(T::Boolean), verbose: T.nilable(T::Boolean)).void }
-    def initialize(debug: nil, quiet: nil, verbose: nil)
-      @debug = T.let(debug, T.nilable(T::Boolean))
-      @quiet = T.let(quiet, T.nilable(T::Boolean))
-      @verbose = T.let(verbose, T.nilable(T::Boolean))
+    sig {
+      params(
+        debug:                          T.nilable(T::Boolean),
+        quiet:                          T.nilable(T::Boolean),
+        verbose:                        T.nilable(T::Boolean),
+        deferred_environment_expansion: T.nilable(T::Boolean),
+      ).void
+    }
+    def initialize(debug: nil, quiet: nil, verbose: nil, deferred_environment_expansion: nil)
+      @debug = debug
+      @quiet = quiet
+      @verbose = verbose
+      @deferred_environment_expansion = deferred_environment_expansion
     end
 
     sig { returns(T::Boolean) }
@@ -29,6 +37,11 @@ module Context
     sig { returns(T::Boolean) }
     def verbose?
       @verbose == true
+    end
+
+    sig { returns(T::Boolean) }
+    def deferred_environment_expansion?
+      @deferred_environment_expansion == true
     end
   end
 
@@ -69,13 +82,24 @@ module Context
     Context.current.verbose?
   end
 
+  sig { returns(T::Boolean) }
+  def deferred_environment_expansion?
+    Context.current.deferred_environment_expansion?
+  end
+
   sig {
-    params(debug: T.nilable(T::Boolean), quiet: T.nilable(T::Boolean), verbose: T.nilable(T::Boolean),
-           _block: T.proc.void).returns(T.untyped)
+    params(
+      debug:                          T.nilable(T::Boolean),
+      quiet:                          T.nilable(T::Boolean),
+      verbose:                        T.nilable(T::Boolean),
+      deferred_environment_expansion: T.nilable(T::Boolean),
+      _block:                         T.proc.void,
+    ).returns(T.untyped)
   }
-  def with_context(debug: debug?, quiet: quiet?, verbose: verbose?, &_block)
+  def with_context(debug: debug?, quiet: quiet?, verbose: verbose?,
+                   deferred_environment_expansion: deferred_environment_expansion?, &_block)
     old_context = Context.current
-    Thread.current[:context] = ContextStruct.new(debug:, quiet:, verbose:)
+    Thread.current[:context] = ContextStruct.new(debug:, quiet:, verbose:, deferred_environment_expansion:)
 
     begin
       yield

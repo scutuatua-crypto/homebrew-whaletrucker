@@ -14,7 +14,7 @@ class PourBottleCheck
     @formula.pour_bottle_check_unsatisfied_reason = reason
   end
 
-  sig { params(block: T.proc.void).void }
+  sig { params(block: T.proc.bind(::Formula).returns(T::Boolean)).void }
   def satisfy(&block)
     @formula.send(:define_method, :pour_bottle?, &block)
   end

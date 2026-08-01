@@ -9,14 +9,14 @@ require "os/mac/xcode"
 module Homebrew
   module DevCmd
     class Unbottled < AbstractCommand
-      PORTABLE_FORMULAE = T.let(%w[
+      PORTABLE_FORMULAE = %w[
         portable-libffi
         portable-libxcrypt
         portable-libyaml
         portable-openssl
         portable-ruby
         portable-zlib
-      ].freeze, T::Array[String])
+      ].freeze
 
       cmd_args do
         description <<~EOS
@@ -32,7 +32,8 @@ module Homebrew
                description: "Print the `homebrew/core` commits where bottles were lost in the last week."
         switch "--eval-all",
                description: "Evaluate all available formulae and casks, whether installed or not, to check them.",
-               env:         :eval_all
+               env:         :eval_all,
+               odeprecated: true
 
         conflicts "--dependents", "--total", "--lost"
 
@@ -75,15 +76,19 @@ module Homebrew
 
         Homebrew::SimulateSystem.with(os:, arch:) do
           eval_all = args.eval_all?
+          eval_all ||= args.named.blank? && (args.total? || args.dependents?) &&
+                       Homebrew::EnvConfig.tap_trust_configured?
 
           if args.total? && !eval_all
-            raise UsageError, "`brew unbottled --total` needs `--eval-all` passed or `HOMEBREW_EVAL_ALL=1` set!"
+            raise UsageError,
+                  "`brew unbottled --total` needs `HOMEBREW_REQUIRE_TAP_TRUST=1` or " \
+                  "`HOMEBREW_NO_REQUIRE_TAP_TRUST=1` set!"
           end
 
           if args.named.blank?
             ohai "Getting formulae..."
           elsif eval_all
-            raise UsageError, "Cannot specify formulae when using `--eval-all`/`--total`."
+            raise UsageError, "Cannot specify formulae when evaluating all formulae or using `--total`."
           end
 
           formulae, all_formulae, formula_installs = formulae_all_installs_from_args(eval_all)
@@ -125,7 +130,9 @@ module Homebrew
           formulae = all_formulae = args.named.to_formulae
         elsif args.dependents?
           unless eval_all
-            raise UsageError, "`brew unbottled --dependents` needs `--eval-all` passed or `HOMEBREW_EVAL_ALL=1` set!"
+            raise UsageError,
+                  "`brew unbottled --dependents` needs `HOMEBREW_REQUIRE_TAP_TRUST=1` or " \
+                  "`HOMEBREW_NO_REQUIRE_TAP_TRUST=1` set!"
           end
 
           formulae = all_formulae = Formula.all(eval_all:)
@@ -166,7 +173,7 @@ module Homebrew
         formulae = Array(formulae).reject { |f| f.deprecated? || f.disabled? } if formulae.present?
         all_formulae = Array(all_formulae).reject { |f| f.deprecated? || f.disabled? } if all_formulae.present?
 
-        # Remove portable formulae as they are are handled differently
+        # Remove portable formulae as they are handled differently
         formulae = formulae.reject { |f| PORTABLE_FORMULAE.include?(f.name) } if formulae.present?
         all_formulae = all_formulae.reject { |f| PORTABLE_FORMULAE.include?(f.name) } if all_formulae.present?
 
@@ -185,7 +192,7 @@ module Homebrew
 
         all_formulae.each do |f|
           deps = Dependency.expand(f, cache_key: "unbottled") do |_, dep|
-            Dependency.prune if dep.optional?
+            next Dependable::PRUNE if dep.optional?
           end.map(&:to_formula)
           deps_hash[f.name] = deps
 
@@ -250,7 +257,7 @@ module Homebrew
               when MacOSRequirement
                 next true unless r.version_specified?
 
-                macos_version.compare(r.comparator, r.version)
+                macos_version.compare(r.comparator, T.cast(r.version, MacOSVersion))
               when XcodeRequirement
                 next true unless r.version
 
@@ -324,7 +331,7 @@ module Homebrew
                 formula = nil
               when %r{^diff --git a/Formula/}
                 # Example match: `diff --git a/Formula/a/aws-cdk.rb b/Formula/a/aws-cdk.rb`
-                formula = line.split("/").last.chomp(".rb\n")
+                formula = line.split("/").fetch(-1).chomp(".rb\n")
                 formula = CoreTap.instance.formula_renames.fetch(formula, formula)
                 lost_bottles = 0
               when bottle_tag_sha_regex

@@ -39,7 +39,7 @@ module Homebrew
                                        "--no-pager",
                                        "--no-legend")
         end.chomp.split("\n").filter_map do |svc|
-          Regexp.last_match(0) if svc =~ /homebrew(?>\.mxcl)?\.([\w+-.@]+)/
+          svc[/homebrew(?>\.mxcl)?\.([\w+-.@]+)/]&.delete_suffix(".service")
         end
       end
 
@@ -73,12 +73,12 @@ module Homebrew
       sig { returns(T::Array[String]) }
       def self.remove_unused_service_files
         cleaned = []
-        Dir["#{System.path}homebrew.*.{plist,service}"].each do |file|
-          next if running.include?(File.basename(file).sub(/\.(plist|service)$/i, ""))
+        System.path.glob("homebrew.*.{plist,service,timer}").each do |file|
+          next if running.include?(File.basename(file).sub(/\.(plist|service|timer)$/i, ""))
 
           puts "Removing unused service file: #{file}"
           rm file
-          cleaned << file
+          cleaned << file.to_s
         end
 
         cleaned
@@ -146,13 +146,16 @@ module Homebrew
 
           install_service_file(service, file)
 
-          if file.blank? && verbose
+          if !file && verbose
             ohai "Generated service file for #{service.formula.name}:"
             puts "   #{service.dest.read.gsub("\n", "\n   ")}"
             puts
           end
 
-          next if !take_root_ownership?(service) && System.root?
+          # Never skip loading when ownership was taken, otherwise
+          # only skip a `--sudo-service-user` service when not root.
+          root_ownership_taken = take_root_ownership?(service)
+          next if !root_ownership_taken && sudo_service_user && !System.root?
 
           service_load(service, nil, enable: true)
         end
@@ -171,7 +174,10 @@ module Homebrew
       def self.stop(targets, verbose: false, no_wait: false, max_wait: 0, keep: false)
         targets.each do |service|
           unless service.loaded?
-            rm service.dest if !keep && service.dest.exist? # get rid of installed service file anyway, dude
+            unless keep
+              rm service.dest if service.dest.exist? # get rid of installed service file anyway, dude
+              rm service.timer_dest if System.systemctl? && service.timed? && service.timer_dest.exist?
+            end
             if service.service_file_present?
               odie <<~EOS
                 Service `#{service.name}` is started as `#{service.owner}`. Try:
@@ -196,7 +202,11 @@ module Homebrew
 
           if System.systemctl?
             if keep
+              System::Systemctl.quiet_run(*systemctl_args, "stop", service.timer_name) if service.timed?
               System::Systemctl.quiet_run(*systemctl_args, "stop", service.service_name)
+            elsif service.timed?
+              System::Systemctl.quiet_run(*systemctl_args, "disable", "--now", service.timer_name)
+              System::Systemctl.quiet_run(*systemctl_args, "disable", "--now", service.service_name)
             else
               System::Systemctl.quiet_run(*systemctl_args, "disable", "--now", service.service_name)
             end
@@ -230,6 +240,7 @@ module Homebrew
 
           unless keep
             rm service.dest if service.dest.exist?
+            rm service.timer_dest if System.systemctl? && service.timed? && service.timer_dest.exist?
             # Run daemon-reload on systemctl to finish unloading stopped and deleted service.
             System::Systemctl.run(*systemctl_args, "daemon-reload") if System.systemctl?
           end
@@ -285,6 +296,7 @@ module Homebrew
         elsif System.launchctl?
           group = "admin"
           chown "root", group, service.dest
+          require "plist"
           plist_data = service.dest.read
           plist = begin
             Plist.parse_xml(plist_data, marshal: false)
@@ -354,24 +366,36 @@ module Homebrew
       sig { params(service: Services::FormulaWrapper, enable: T::Boolean).void }
       def self.systemd_load(service, enable:)
         System::Systemctl.run("start", service.service_name)
-        System::Systemctl.run("enable", service.service_name) if enable
+        if service.timed?
+          System::Systemctl.run("start", service.timer_name)
+          System::Systemctl.run("enable", service.timer_name) if enable
+        elsif enable
+          System::Systemctl.run("enable", service.service_name)
+        end
       end
 
       sig { params(service: Services::FormulaWrapper, file: T.nilable(Pathname), enable: T::Boolean).void }
       def self.service_load(service, file, enable:)
-        if System.root? && !service.service_startup?
-          opoo "#{service.name} must be run as non-root to start at user login!"
+        if System.root? && !service.service_startup? && !sudo_service_user
+          opoo "`#{service.name}` must be run as non-root to start at user login!"
         elsif !System.root? && service.service_startup?
-          opoo "#{service.name} must be run as root to start at system startup!"
+          opoo "`#{service.name}` must be run as root to start at system startup!"
+        end
+
+        if (service_user = sudo_service_user) && !System.user_exists?(service_user)
+          function = enable ? "start" : "run"
+          odie "Cannot #{function} `#{service.name}` as `#{service_user}` is not a user!"
         end
 
         if System.launchctl?
           file ||= enable ? service.dest : service.service_file
+          service.path_dirs.each(&:mkpath)
           launchctl_load(service, file:, enable:)
         elsif System.systemctl?
           # Systemctl loads based upon location so only install service
           # file when it is not installed. Used with the `run` command.
           install_service_file(service, file) unless service.dest.exist?
+          service.path_dirs.each(&:mkpath)
           systemd_load(service, enable:)
         end
 
@@ -389,12 +413,13 @@ module Homebrew
         end
 
         temp = Tempfile.new(service.service_name)
-        temp << if file.blank?
+        temp << if file.nil?
           contents = service.service_file.read
 
           if sudo_service_user && System.launchctl?
             # set the username in the new plist file
-            ohai "Setting username in #{service.service_name} to: #{System.user}"
+            ohai "Setting username in #{service.service_name} to: #{sudo_service_user}"
+            require "plist"
             plist_data = Plist.parse_xml(contents, marshal: false)
             plist_data["UserName"] = sudo_service_user
             plist_data.to_plist
@@ -414,6 +439,11 @@ module Homebrew
         temp.close
 
         chmod 0644, service.dest
+        if System.systemctl? && service.timed?
+          rm service.timer_dest if service.timer_dest.exist?
+          cp service.timer_file, service.timer_dest
+          chmod 0644, service.timer_dest
+        end
 
         System::Systemctl.run("daemon-reload") if System.systemctl?
       end

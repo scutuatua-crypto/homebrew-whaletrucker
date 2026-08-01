@@ -15,7 +15,7 @@ module Utils
 
       sig { returns(T::Boolean) }
       def available?
-        executable.present?
+        !!executable
       end
 
       sig { returns(T.nilable(Pathname)) }
@@ -37,11 +37,6 @@ module Utils
         stdout, _, status = system_command(T.must(executable), args:         ["--list", "--file", path],
                                                                print_stderr: false).to_a
         odie "#{path} is not a valid tar file!" if !status.success? || stdout.blank?
-      end
-
-      sig { void }
-      def clear_executable_cache
-        remove_instance_variable(:@executable) if defined?(@executable)
       end
     end
   end

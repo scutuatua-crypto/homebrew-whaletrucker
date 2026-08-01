@@ -32,7 +32,7 @@ class Cmd
   CXX_REGEX = /(?:c|g|clang)\+\+/.freeze
 
   attr_reader :config, :prefix, :cellar, :opt, :cachedir, :tmpdir, :sysroot, :deps
-  attr_reader :archflags, :optflags, :keg_regex, :formula_prefix, :formula_buildpath
+  attr_reader :optflags, :keg_regex, :formula_prefix, :formula_buildpath
 
   def initialize(arg0, args)
     @arg0 = arg0
@@ -46,7 +46,6 @@ class Cmd
     @opt = ENV["HOMEBREW_OPT"]
     @tmpdir = ENV["HOMEBREW_TEMP"]
     @sysroot = ENV["HOMEBREW_SDKROOT"]
-    @archflags = ENV.fetch("HOMEBREW_ARCHFLAGS", "").split
     @optflags = ENV.fetch("HOMEBREW_OPTFLAGS", "").split
     @deps = Set.new(ENV.fetch("HOMEBREW_DEPENDENCIES", "").split(","))
     @formula_prefix = ENV["HOMEBREW_FORMULA_PREFIX"]
@@ -91,10 +90,10 @@ class Cmd
     when "ld" then "ld"
     when "gold", "ld.gold" then "ld.gold"
     when "cpp" then "cpp"
-    when /llvm_(clang(\+\+)?)/
-      "#{ENV["HOMEBREW_PREFIX"]}/opt/llvm/bin/#{Regexp.last_match(1)}"
     when /\w\+\+(-\d+(\.\d)?)?$/
       case ENV["HOMEBREW_CC"]
+      when "llvm_clang"
+        "#{ENV["HOMEBREW_PREFIX"]}/opt/llvm/bin/clang++"
       when "swift_clang"
         "#{ENV["HOMEBREW_PREFIX"]}/opt/swift/libexec/bin/clang++"
       when /clang/
@@ -309,7 +308,6 @@ class Cmd
       # For runtime CPU detection builds, pass our optimisation flag whenever the build hasn't provided its own.
       args << optflag if !runtime_cpu_detection? || @args.none? { |arg| arg.start_with?(flag) }
     end
-    args.concat(archflags)
     args << "-std=#{@arg0}" if /c[89]9/.match?(@arg0)
     args << "-g" if debug_symbols?
     args
@@ -320,9 +318,6 @@ class Cmd
     args << "-std=c++11" if cxx11?
     args << "-stdlib=libc++" if libcxx?
     args << "-stdlib=libstdc++" if libstdcxx?
-    if ENV["HOMEBREW_CC"] == "llvm_clang" && mac?
-      args << "-I#{ENV["HOMEBREW_LIBRARY"]}/Homebrew/shims/mac/shared/include/llvm"
-    end
     args
   end
 
@@ -472,7 +467,7 @@ class Cmd
   end
 
   def oso_prefix?
-    config.include?("o") && !configure? && !debug_symbols?
+    !configure? && !debug_symbols?
   end
 
   def ld_classic?

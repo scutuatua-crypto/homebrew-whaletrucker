@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "keg_relocate"
@@ -15,7 +16,7 @@ RSpec.describe Keg::Relocation do
   let(:escaped_cellar) { /(?:(?<=-F|-I|-L|-isystem)|(?<![a-zA-Z0-9]))#{HOMEBREW_CELLAR}/o }
 
   def setup_relocation
-    relocation = described_class.new
+    relocation = Keg::Relocation.new
     relocation.add_replacement_pair :prefix, prefix, prefix_placeholder, path: true
     relocation.add_replacement_pair :cellar, /#{cellar}/o, cellar_placeholder, path: true
     relocation.add_replacement_pair :repository_placeholder, repository_placeholder, repository

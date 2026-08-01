@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "open3"
@@ -18,9 +19,77 @@ RSpec.describe "Bash" do
   end
 
   describe "brew" do
-    subject { HOMEBREW_LIBRARY_PATH.parent.parent/"bin/brew" }
+    subject(:brew) { HOMEBREW_LIBRARY_PATH.parent.parent/"bin/brew" }
 
     it { is_expected.to have_valid_bash_syntax }
+
+    it "selects Landlock on self-hosted Linux GitHub Actions runners", :needs_linux do
+      stdout, stderr, status = Open3.capture3(
+        {
+          "CI"                                  => "1",
+          "GITHUB_ACTIONS"                      => "true",
+          "GITHUB_ACTIONS_HOMEBREW_SELF_HOSTED" => "1",
+          "HOMEBREW_DEV_CMD_RUN"                => "1",
+          "HOMEBREW_SANDBOX_LINUX_LANDLOCK"     => nil,
+        },
+        brew.to_s, "ruby", "--", "-e", "print OS::Linux::Sandbox.sandbox_implementation"
+      )
+
+      expect([stdout, stderr, status.success?]).to eq(["Sandbox::Landlock", "", true])
+    end
+  end
+
+  describe "setup-locale" do
+    it "uses the macOS locale charmap rather than the locale name", :needs_macos do
+      setup_locale = [
+        "/bin/bash", "-c", <<~BASH, "bash", (HOMEBREW_LIBRARY_PATH/"utils/os.sh").to_s
+          source "$1"
+          locale() {
+            [[ "${LC_CTYPE:-${LANG:-}}" == "UTF-8" ]] && printf "UTF-8" || printf "US-ASCII"
+          }
+          setup-locale
+          printf "%s" "${LC_ALL-unset}"
+        BASH
+      ]
+      invalid_stdout, invalid_stderr, invalid_status = Open3.capture3(
+        { "LANG" => "C.utf8", "LC_CTYPE" => nil, "LC_ALL" => nil }, *setup_locale
+      )
+      valid_stdout, valid_stderr, valid_status = Open3.capture3(
+        { "LANG" => nil, "LC_CTYPE" => "UTF-8", "LC_ALL" => nil }, *setup_locale
+      )
+
+      expect([invalid_stdout, invalid_stderr, invalid_status.success?,
+              valid_stdout, valid_stderr, valid_status.success?])
+        .to eq(["en_US.UTF-8", "", true, "unset", "", true])
+    end
+
+    it "restores filtered Linux locale variables and removes their copies" do
+      stdout, stderr, status = Open3.capture3(
+        { "LANG" => nil, "LC_CTYPE" => nil, "LC_ALL" => nil },
+        "/bin/bash", "-c", <<~'BASH', "bash", (HOMEBREW_LIBRARY_PATH/"utils/os.sh").to_s
+          source "$1"
+          HOMEBREW_MACOS=
+          HOMEBREW_LANG=C
+          HOMEBREW_LC_CTYPE=C
+          HOMEBREW_LC_ALL=C.UTF-8
+          locale() {
+            if [[ "$1" == "charmap" ]]
+            then
+              [[ "${LC_ALL:-}" == "C.UTF-8" ]] && printf "UTF-8" || printf "US-ASCII"
+            else
+              printf "locale -a called\n" >&2
+              printf "C.UTF-8\n"
+            fi
+          }
+          setup-locale
+          printf "%s\n" "${LANG-unset}" "${LC_CTYPE-unset}" "${LC_ALL-unset}" \
+            "${HOMEBREW_LANG-unset}" "${HOMEBREW_LC_CTYPE-unset}" "${HOMEBREW_LC_ALL-unset}"
+        BASH
+      )
+
+      expect([stdout, stderr, status.success?])
+        .to eq(["C\nC\nC.UTF-8\nunset\nunset\nunset\n", "", true])
+    end
   end
 
   describe "every `.sh` file" do

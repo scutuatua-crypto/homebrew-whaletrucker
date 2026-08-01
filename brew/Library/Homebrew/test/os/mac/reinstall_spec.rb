@@ -1,4 +1,4 @@
-# typed: false
+# typed: true
 # frozen_string_literal: true
 
 require "reinstall"
@@ -10,7 +10,7 @@ RSpec.describe Homebrew::Reinstall do
     let(:formula_installer) do
       instance_double(FormulaInstaller, formula:, prelude_fetch: true, prelude: true, fetch: true)
     end
-    let(:context) { instance_double(described_class::InstallationContext, formula_installer:) }
+    let(:context) { instance_double(Homebrew::Reinstall::InstallationContext, formula_installer:) }
 
     before do
       allow(Formula).to receive(:[]).with("pkgconf").and_return(formula)

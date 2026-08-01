@@ -1,16 +1,18 @@
 ---
-last_review_date: "2025-11-10"
+last_review_date: "2026-04-03"
 ---
 
 # Support Tiers
 
 Homebrew defines three support tiers to help users understand how well Homebrew is expected to work on different systems.
 
-These tiers describe the level of compatibility, automation coverage, and community support that the project actively maintains. They also set expectations for how we handle issues, pull requests, and regressions.
+These tiers describe the level of compatibility, automation coverage and community support that the project actively maintains. They also set expectations for how we handle issues, pull requests and regressions.
+
+These tiers describe Homebrew support for the host system itself, not a guarantee that every third-party formula or cask will remain runnable on that system forever. Package-specific policies, such as the phase-out for Rosetta-dependent casks on Apple Silicon, are documented separately in [Acceptable Casks](Acceptable-Casks.md).
 
 ## Tier 1
 
-A Tier 1 configuration is considered fully supported. These configurations receive the highest level of CI coverage and are prioritized during issue review and formula development.
+A Tier 1 configuration is considered fully supported. These configurations receive the highest level of CI coverage and are prioritised during issue review and formula development.
 
 Users can expect:
 
@@ -43,7 +45,7 @@ To qualify as Tier 1, a Linux configuration must meet all of the following:
 - Running on:
   - Ubuntu within its [standard support window](https://ubuntu.com/about/release-cycle) or
   - a Homebrew-provided Docker image
-- Using a system `glibc` version ≥ 2.35
+- Using a system `glibc` version ≥ 2.39
 - Using a Linux kernel version ≥ 3.2
 - Installed in the default prefix: `/home/linuxbrew/.linuxbrew`
 - Using a supported architecture (ARM64/AArch64 or Intel x86_64 with SSSE3 support)
@@ -66,8 +68,9 @@ The following conditions typically apply:
 Tier 2 configurations include:
 
 - macOS prerelease versions before they are promoted to Tier 1
-- Linux systems with `glibc` versions between 2.13 and 2.34 (Homebrew’s own `glibc` formula will be installed automatically)
-- Homebrew installed outside the default prefix, requiring source builds for official packages (i.e. installing outside `/opt/homebrew`, `/usr/local`, or `/home/linuxbrew/.linuxbrew`)
+- macOS systems with outdated versions of Xcode Command Line Tools
+- Linux systems with `glibc` versions between 2.13 and 2.38 (Homebrew’s own `glibc` formula will be installed automatically)
+- Homebrew installed outside the default prefix, requiring source builds for official packages (i.e. installing outside `/opt/homebrew`, `/usr/local` or `/home/linuxbrew/.linuxbrew`)
 - Architectures not yet officially supported by Homebrew
 - Macs using OpenCore Legacy Patcher with a Westmere or newer Intel CPU
 
@@ -78,7 +81,7 @@ A Tier 3 configuration is not supported. These configurations fall far outside H
 The following conditions typically apply:
 
 - Homebrew may work, but with a poor and unstable experience
-- Migration to a Tier 1 or 2 configuration, or to a non-Homebrew tool, is strongly recommended
+- Migration to a Tier 1 or 2 configuration or to a non-Homebrew tool is strongly recommended
 - Pull requests must meet a very high bar: they must resolve an issue (not merely work around it) and must not introduce high ongoing maintenance cost (e.g. patches must already be merged upstream)
 - Homebrew maintainers do not commit to fixing bugs affecting these systems
 - Functionality may regress intentionally if it benefits supported configurations
@@ -91,7 +94,8 @@ Tier 3 configurations include:
 
 - macOS versions no longer covered by CI and no longer receiving regular Apple security updates
 - Systems that build official packages from source despite available bottles
-- Homebrew installed outside the default prefix (e.g. `/opt/homebrew`, `/usr/local`, or `/home/linuxbrew/.linuxbrew` used on mismatched architectures)
+- Homebrew installed outside the default prefix (e.g. `/opt/homebrew`, `/usr/local` or `/home/linuxbrew/.linuxbrew` used on mismatched architectures)
+- Homebrew installations managed by Nix (e.g. nix-darwin or nix-homebrew)
 - Installing formulae using `--HEAD`
 - Installing deprecated or disabled formulae
 - Macs using OpenCore Legacy Patcher with an Intel CPU older than Westmere
@@ -101,26 +105,29 @@ Tier 3 configurations include:
 An unsupported configuration is one in which:
 
 - Homebrew will not run without third-party patches or modifications
-- Migration to another tool is required (e.g. [MacPorts](https://www.macports.org), [Tigerbrew](https://github.com/mistydemeo/tigerbrew), or a native Linux package manager)
+- Migration to another tool is required (e.g. [MacPorts](https://www.macports.org), [Tigerbrew](https://github.com/mistydemeo/tigerbrew) or a native Linux package manager)
 
 Unsupported configurations include:
 
 - FreeBSD
 - macOS Mojave 10.14 and earlier
+- Multi-user Homebrew environments where multiple users share the same installation
 - Beowulf clusters
 - Nokia 3210s
 - CPUs built inside of Minecraft
 - Toasters
 
-## Unsupported Software
+## Unsupported software
 
 Packages installed from third-party taps outside the Homebrew GitHub organization are unsupported by default.
 
-While Homebrew may assist third-party maintainers in resolving issues related to the formula, cask, or tap system itself, it does not provide support for the behavior or operation of third-party software.
+While Homebrew may assist third-party maintainers in resolving issues related to the formula, cask or tap system itself, it does not provide support for the behaviour or operation of third-party software.
 
 Bugs that occur only when using third-party formulae or casks may be closed without investigation.
 
-## Future macOS Support
+If you are using a Homebrew wrapper, get support from and file issues with that wrapper instead of Homebrew unless the same problem is reproducible when running Homebrew directly.
+
+## Future macOS support
 
 Apple has announced that macOS Tahoe 26 will be the final version of macOS to support Intel x86_64 hardware. In alignment with this change, Homebrew plans to remove support for macOS on Intel in a future release after that point.
 
@@ -156,3 +163,9 @@ The following timeline outlines expected Tier classifications based on Apple’s
 
   Intel x86_64:
   - Unsupported: all macOS versions
+
+### Rosetta 2
+
+[Apple has also announced](https://developer.apple.com/documentation/apple-silicon/about-the-rosetta-translation-environment) that Rosetta 2 will remain available as a general-purpose compatibility tool through macOS 27, with only a narrower legacy-games-focused subset planned beyond that.
+
+This does not change the support tier of an otherwise supported Apple Silicon Mac, but it does shorten the expected support window for x86_64-only casks that rely on [`requires_rosetta`](Cask-Cookbook.md#caveats-mini-dsl). See [Acceptable Casks](Acceptable-Casks.md) for the expected acceptance, deprecation and removal timeline for those casks.

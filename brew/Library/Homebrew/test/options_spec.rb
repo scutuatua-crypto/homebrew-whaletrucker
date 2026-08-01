@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "options"
@@ -42,14 +43,14 @@ RSpec.describe Options do
 
   specify "#&" do
     foo, bar, baz = %w[foo bar baz].map { |o| Option.new(o) }
-    other_options = described_class.new << foo << bar
+    other_options = described_class.new << T.must(foo) << T.must(bar)
     options << foo << baz
     expect((options & other_options).to_a).to eq([foo])
   end
 
   specify "#|" do
     foo, bar, baz = %w[foo bar baz].map { |o| Option.new(o) }
-    other_options = described_class.new << foo << bar
+    other_options = described_class.new << T.must(foo) << T.must(bar)
     options << foo << baz
     expect((options | other_options).sort).to eq([foo, bar, baz].sort)
   end

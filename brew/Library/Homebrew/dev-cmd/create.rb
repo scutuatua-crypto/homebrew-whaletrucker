@@ -124,7 +124,6 @@ module Homebrew
 
         cask_path.atomic_write <<~RUBY
           # Documentation: https://docs.brew.sh/Cask-Cookbook
-          #                https://docs.brew.sh/Adding-Software-to-Homebrew#cask-stanzas
           # PLEASE REMOVE ALL GENERATED COMMENTS BEFORE SUBMITTING YOUR PULL REQUEST!
           cask "#{token}" do
             version "#{version}"

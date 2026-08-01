@@ -8,13 +8,12 @@ require "utils/output"
 
 # Helper module for validating syntax in taps.
 module Readall
+  extend T::Generic
   extend Cachable
   extend SystemCommand::Mixin
   extend Utils::Output::Mixin
 
-  # TODO: remove this once the `MacOS` module is undefined on Linux
-  MACOS_MODULE_REGEX = /\b(MacOS|OS::Mac)(\.|::)\b/
-  private_constant :MACOS_MODULE_REGEX
+  Cache = type_template { { fixed: T::Hash[Symbol, T.untyped] } }
 
   private_class_method :cache
 
@@ -67,9 +66,7 @@ module Readall
                                                      flags: [], ignore_errors: false)
       readall_formula = readall_formula_class.new(formula_name, file, :stable, tap:)
       readall_formula.to_hash
-      # TODO: Remove check for MACOS_MODULE_REGEX once the `MacOS` module is undefined on Linux
-      cache[:valid_formulae][file] = if readall_formula.on_system_blocks_exist? ||
-                                        formula_contents.match?(MACOS_MODULE_REGEX)
+      cache[:valid_formulae][file] = if readall_formula.on_system_blocks_exist?
         [bottle_tag, *cache[:valid_formulae][file]]
       else
         true
@@ -85,9 +82,63 @@ module Readall
     success
   end
 
-  sig { params(_tap: Tap, os_name: T.nilable(Symbol), arch: T.nilable(Symbol)).returns(T::Boolean) }
-  def self.valid_casks?(_tap, os_name: nil, arch: nil)
-    true
+  sig { params(tap: Tap, os_name: T.nilable(Symbol), arch: T.nilable(Symbol)).returns(T::Boolean) }
+  def self.valid_casks?(tap, os_name: nil, arch: nil)
+    validating_linux = if os_name.nil?
+      Homebrew::SimulateSystem.current_os == :linux
+    else
+      os_name == :linux
+    end
+    return true unless validating_linux
+
+    os_and_arch = "Linux"
+    os_and_arch += " on #{(arch == :intel) ? "Intel x86_64" : "ARM64"}" if arch
+
+    success = T.let(true, T::Boolean)
+    tap.cask_files.each do |file|
+      next if file.read.match?(/^\s*depends_on(?:\s*\(\s*|\s+)(?::macos\b|macos:)/)
+
+      cask = if arch
+        Homebrew::SimulateSystem.with(os: :macos, arch:) do
+          loaded_cask = Cask::CaskLoader.load(file)
+          loaded_cask if loaded_cask.supports_linux?
+        end
+      else
+        Homebrew::SimulateSystem.with(os: :macos) do
+          loaded_cask = Cask::CaskLoader.load(file)
+          loaded_cask if loaded_cask.supports_linux?
+        end
+      end
+      next unless cask
+
+      linux_sha256 = if arch
+        Homebrew::SimulateSystem.with(os: :linux, arch:) do
+          cask.refresh
+          cask.sha256
+        end
+      else
+        Homebrew::SimulateSystem.with(os: :linux) do
+          cask.refresh
+          cask.sha256
+        end
+      end
+      # No `sha256` matched Linux, so the cask cannot be downloaded there
+      # despite not being marked macOS-only.
+      next unless linux_sha256.nil?
+
+      onoe "Invalid cask (#{os_and_arch}): #{file}"
+      $stderr.puts "Missing Linux stanzas can leave Linux `sha256` as nil. " \
+                   "Add `depends_on :macos` if this cask is macOS-only."
+      success = false
+    rescue Interrupt
+      raise
+    # Handle all possible exceptions reading casks.
+    rescue Exception => e # rubocop:disable Lint/RescueException
+      onoe "Invalid cask (#{os_and_arch}): #{file}"
+      $stderr.puts e
+      success = false
+    end
+    success
   end
 
   sig {

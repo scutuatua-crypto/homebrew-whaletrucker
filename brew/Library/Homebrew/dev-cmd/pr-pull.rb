@@ -46,7 +46,8 @@ module Homebrew
         switch "--retain-bottle-dir",
                description: "Does not clean up the tmp directory for the bottle so it can be used later."
         flag   "--committer=",
-               description: "Specify a committer name and email in `git`'s standard author format."
+               description: "Specify a committer name and email in `git`'s standard author format.",
+               odeprecated: true
         flag   "--message=",
                depends_on:  "--autosquash",
                description: "Message to include when autosquashing revision bumps, deletions and rebuilds."
@@ -54,6 +55,8 @@ module Homebrew
                description: "Download artifacts with the specified pattern (default: `bottles{,_*}`)."
         flag   "--tap=",
                description: "Target tap repository (default: `homebrew/core`)."
+        flag   "--head-sha=",
+               description: "Expected pull request head commit SHA."
         flag   "--root-url=",
                description: "Use the specified <URL> as the root of the bottle's URL instead of Homebrew's default."
         flag   "--root-url-using=",
@@ -68,6 +71,8 @@ module Homebrew
         conflicts "--clean", "--autosquash"
 
         named_args :pull_request, min: 1
+
+        hide_from_man_page!
       end
 
       sig { override.void }
@@ -106,6 +111,15 @@ module Homebrew
             opoo "Pull request is labelled `autosquash`: do you need to pass `--autosquash`?"
           end
 
+          pull_request_commits = nil
+          head_sha = if (head_sha_arg = args.head_sha.presence)
+            head_sha_arg = head_sha_arg.downcase
+            ohai "Pull request ##{pr} expected head SHA: #{head_sha_arg}"
+            head_sha_arg
+          else
+            pull_request_commits = check_pull_request_head_sha!(user, repo, pr)
+            pull_request_commits.fetch(-1)
+          end
           pr_check_conflicts("#{user}/#{repo}", pr)
 
           ohai "Fetching #{tap} pull request ##{pr}"
@@ -118,12 +132,15 @@ module Homebrew
                 Utils.safe_popen_read("git", "-C", tap.path, "merge-base", "origin/HEAD",
                                       current_branch_head).strip
               else
-                current_branch_head
+                current_branch_head || odie("Failed to get current branch head")
               end
               odebug "Pull request merge-base: #{original_commit}"
 
               unless args.no_commit?
-                cherry_pick_pr!(user, repo, pr, path: tap.path) unless args.no_cherry_pick?
+                unless args.no_cherry_pick?
+                  cherry_pick_pr!(user, repo, pr, path:    tap.path,
+                                                  commits: pull_request_commits, head_sha:)
+                end
                 if args.autosquash? && !args.dry_run?
                   autosquash!(original_commit, tap:, cherry_picked: !args.no_cherry_pick?,
                               verbose: args.verbose?, resolve: args.resolve?, reason: args.message)
@@ -138,7 +155,7 @@ module Homebrew
 
               workflows.each do |workflow|
                 workflow_run = GitHub.get_workflow_run(
-                  user, repo, pr, workflow_id: workflow, artifact_pattern:
+                  user, repo, pr, workflow_id: workflow, artifact_pattern:, head_sha:
                 )
                 if args.ignore_missing_artifacts.present? &&
                    args.ignore_missing_artifacts&.include?(workflow) &&
@@ -164,7 +181,6 @@ module Homebrew
               upload_args << "--dry-run" if args.dry_run?
               upload_args << "--keep-old" if args.keep_old?
               upload_args << "--warn-on-upload-failure" if args.warn_on_upload_failure?
-              upload_args << "--committer=#{args.committer}" if args.committer
               upload_args << "--root-url=#{args.root_url}" if args.root_url
               upload_args << "--root-url-using=#{args.root_url_using}" if args.root_url_using
               safe_system HOMEBREW_BREW_FILE, *upload_args
@@ -363,25 +379,24 @@ module Homebrew
         ohai bump_subject
       end
 
-      # TODO: fix test in `test/dev-cmd/pr-pull_spec.rb` and assume `cherry_picked: false`.
       sig {
         params(original_commit: String, tap: Tap, reason: T.nilable(String), verbose: T::Boolean, resolve: T::Boolean,
                cherry_picked: T::Boolean).void
       }
-      def autosquash!(original_commit, tap:, reason: "", verbose: false, resolve: false, cherry_picked: true)
+      def autosquash!(original_commit, tap:, reason: "", verbose: false, resolve: false, cherry_picked: false)
         git_repo = tap.git_repository
 
         commits = Utils.safe_popen_read("git", "-C", tap.path, "rev-list",
                                         "--reverse", "#{original_commit}..HEAD").lines.map(&:strip)
 
         # Generate a bidirectional mapping of commits <=> formula/cask files.
-        files_to_commits = {}
+        files_to_commits = T.let({}, T::Hash[String, T::Array[String]])
         commits_to_files = commits.to_h do |commit|
           files = Utils.safe_popen_read("git", "-C", tap.path, "diff-tree", "--diff-filter=AMD",
                                         "-r", "--name-only", "#{commit}^", commit).lines.map(&:strip)
           files.each do |file|
             files_to_commits[file] ||= []
-            files_to_commits[file] << commit
+            files_to_commits.fetch(file) << commit
             tap_file = (tap.path/file).to_s
             if tap_file.start_with?("#{tap.formula_dir}/", "#{tap.cask_dir}/") &&
                File.extname(file) == ".rb"
@@ -406,17 +421,17 @@ module Homebrew
         commits.each do |commit|
           next if processed_commits.include? commit
 
-          files = commits_to_files[commit]
-          if files.length == 1 && files_to_commits[files.first].length == 1
+          files = commits_to_files.fetch(commit)
+          if files.length == 1 && files_to_commits.fetch(files.fetch(0)).length == 1
             # If there's a 1:1 mapping of commits to files, just cherry pick and (maybe) reword.
             reword_package_commit(
-              commit, files.first, git_repo:, reason:, verbose:, resolve:
+              commit, files.fetch(0), git_repo:, reason:, verbose:, resolve:
             )
             processed_commits << commit
-          elsif files.length == 1 && files_to_commits[files.first].length > 1
+          elsif files.length == 1 && files_to_commits.fetch(files.fetch(0)).length > 1
             # If multiple commits modify a single file, squash them down into a single commit.
-            file = files.first
-            commits = files_to_commits[file]
+            file = files.fetch(0)
+            commits = files_to_commits.fetch(file)
             squash_package_commits(commits, file, git_repo:, reason:, verbose:, resolve:)
             processed_commits += commits
           else
@@ -438,10 +453,27 @@ module Homebrew
         raise
       end
 
+      sig { params(user: String, repo: String, pull_request: String).returns(T::Array[String]) }
+      def check_pull_request_head_sha!(user, repo, pull_request)
+        commits = GitHub.pull_request_commits(user, repo, pull_request)
+        pull_request_head_sha = commits.fetch(-1)
+        ohai "Pull request ##{pull_request} head SHA: #{pull_request_head_sha}"
+        commits
+      end
+
       private
 
-      sig { params(user: String, repo: String, pull_request: String, path: T.any(String, Pathname)).void }
-      def cherry_pick_pr!(user, repo, pull_request, path: ".")
+      sig {
+        params(
+          user:         String,
+          repo:         String,
+          pull_request: String,
+          head_sha:     String,
+          path:         T.any(String, Pathname),
+          commits:      T.nilable(T::Array[String]),
+        ).void
+      }
+      def cherry_pick_pr!(user, repo, pull_request, head_sha:, path: ".", commits: nil)
         if args.dry_run?
           puts <<~EOS
             git fetch --force origin +refs/pull/#{pull_request}/head
@@ -451,7 +483,12 @@ module Homebrew
           return
         end
 
-        commits = GitHub.pull_request_commits(user, repo, pull_request)
+        commits ||= GitHub.pull_request_commits(user, repo, pull_request)
+        pull_request_head_sha = commits.fetch(-1).downcase
+        if pull_request_head_sha != head_sha
+          odie "Pull request ##{pull_request} is at #{pull_request_head_sha} but expected #{head_sha}."
+        end
+
         safe_system "git", "-C", path, "fetch", "--quiet", "--force", "origin", commits.last
         ohai "Using #{commits.count} commit#{"s" if commits.count != 1} from ##{pull_request}"
         Utils::Git.cherry_pick!(path, "--ff", "--allow-empty", *commits, verbose: args.verbose?,
@@ -469,7 +506,7 @@ module Homebrew
         end
       end
 
-      sig { params(tap: Tap, original_commit: String).returns(T::Array[String]) }
+      sig { params(tap: Tap, original_commit: String).returns(T::Array[T.any(Formula, Cask::Cask)]) }
       def changed_packages(tap, original_commit)
         formulae = Utils.popen_read("git", "-C", tap.path, "diff-tree",
                                     "-r", "--name-only", "--diff-filter=AM",
@@ -481,7 +518,7 @@ module Homebrew
           name = "#{tap.name}/#{File.basename(line.chomp, ".rb")}"
           if Homebrew::EnvConfig.disable_load_formula?
             opoo "Can't check if updated bottles are necessary as `$HOMEBREW_DISABLE_LOAD_FORMULA` is set!"
-            break
+            break []
           end
           begin
             Formulary.resolve(name)

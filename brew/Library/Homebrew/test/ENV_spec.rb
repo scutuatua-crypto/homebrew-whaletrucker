@@ -1,12 +1,13 @@
+# typed: true
 # frozen_string_literal: true
 
 require "extend/ENV"
 
 RSpec.describe "ENV" do
-  shared_examples EnvActivation do
-    subject(:env) { env_activation.extend(described_class) }
+  subject(:env) { {}.extend(EnvActivation).extend(described_class) }
 
-    let(:env_activation) { {}.extend(EnvActivation) }
+  shared_examples EnvActivation do
+    include Context
 
     it "supports switching compilers" do
       subject.clang
@@ -158,10 +159,83 @@ RSpec.describe "ENV" do
         expect(subject).not_to include("SECRET_TOKEN")
       end
 
+      it "preserves excepted sensitive environment variables" do
+        subject["SECRET_TOKEN"] = "password"
+        subject.clear_sensitive_environment!(except: ["SECRET_TOKEN"])
+        expect(subject["SECRET_TOKEN"]).to eq("password")
+      end
+
       it "leaves non-sensitive environment variables alone" do
         subject["FOO"] = "bar"
         subject.clear_sensitive_environment!
         expect(subject["FOO"]).to eq "bar"
+      end
+
+      it "restores the environment after yielding" do
+        subject["SECRET_TOKEN"] = "password"
+        subject["FOO"] = "bar"
+
+        result = subject.clear_sensitive_environment! do
+          subject["FOO"] = "baz"
+          subject["OTHER_TOKEN"] = "secret"
+
+          [subject["SECRET_TOKEN"], subject["FOO"]]
+        end
+
+        expect(result).to eq([nil, "baz"])
+        expect(subject["SECRET_TOKEN"]).to eq("password")
+        expect(subject["FOO"]).to eq("bar")
+        expect(subject).not_to include("OTHER_TOKEN")
+      end
+    end
+
+    describe "#clear_sensitive_environment_for_eval!" do
+      it "defers HOMEBREW_ secrets to a placeholder" do
+        subject["HOMEBREW_PRIVATE_TOKEN"] = "glpat-secret"
+
+        deferred = subject.clear_sensitive_environment_for_eval! { subject["HOMEBREW_PRIVATE_TOKEN"] }
+
+        expect(deferred).not_to eq("glpat-secret")
+        expect(deferred).not_to be_empty
+        expect(subject.expand_deferred_environment("PRIVATE-TOKEN: #{deferred}")).to eq("PRIVATE-TOKEN: #{deferred}")
+      end
+
+      it "never expands a non-HOMEBREW_ secret back to its real value" do
+        subject["SECRET_TOKEN"] = "password"
+        deferred = subject.clear_sensitive_environment_for_eval! { subject["SECRET_TOKEN"] }
+
+        with_context(deferred_environment_expansion: true) do
+          expect(subject.expand_deferred_environment("X: #{deferred}")).not_to include("password")
+        end
+      end
+
+      it "keeps HOMEBREW_GITHUB_API_TOKEN readable during eval" do
+        subject["HOMEBREW_GITHUB_API_TOKEN"] = "gh-token"
+        expect(subject.clear_sensitive_environment_for_eval! do
+          subject["HOMEBREW_GITHUB_API_TOKEN"]
+        end).to eq("gh-token")
+      end
+
+      it "restores the environment after yielding" do
+        subject["HOMEBREW_PRIVATE_TOKEN"] = "glpat-secret"
+        subject.clear_sensitive_environment_for_eval! { nil }
+        expect(subject["HOMEBREW_PRIVATE_TOKEN"]).to eq("glpat-secret")
+      end
+    end
+
+    describe "#expand_deferred_environment" do
+      it "leaves values without a deferred placeholder unchanged" do
+        expect(subject.expand_deferred_environment("PRIVATE-TOKEN: plain")).to eq("PRIVATE-TOKEN: plain")
+      end
+
+      it "expands placeholders only during download strategy fetches" do
+        subject["HOMEBREW_PRIVATE_TOKEN"] = "glpat-secret"
+        deferred = subject.clear_sensitive_environment_for_eval! { subject["HOMEBREW_PRIVATE_TOKEN"] }
+
+        with_context(deferred_environment_expansion: true) do
+          expect(subject.expand_deferred_environment("PRIVATE-TOKEN: #{deferred}"))
+            .to eq("PRIVATE-TOKEN: glpat-secret")
+        end
       end
     end
   end
@@ -198,6 +272,47 @@ RSpec.describe "ENV" do
       it "sets the debug symbols flag" do
         env.set_debug_symbols
         expect(env["HOMEBREW_CCCFG"]).to include("D")
+      end
+    end
+
+    describe "#llvm_clang" do
+      before { env.llvm_clang }
+
+      it "sets HOMEBREW_CC to shim name" do
+        expect(env["HOMEBREW_CC"]).to eq "llvm_clang"
+      end
+
+      it "sets CC/CXX to real names" do
+        expect(env["CC"]).to eq "clang"
+        expect(env["CXX"]).to eq "clang++"
+        expect(env["OBJC"]).to eq "clang"
+        expect(env["OBJCXX"]).to eq "clang++"
+      end
+    end
+
+    describe "when using versioned GCC" do
+      let(:gcc) { "gcc-#{CompilerConstants::GNU_GCC_VERSIONS.last}" }
+
+      before { env.method(gcc).call }
+
+      it "sets versioned HOMEBREW_CC" do
+        expect(env["HOMEBREW_CC"]).to eq gcc
+      end
+
+      it "sets unversioned CC/CXX on Linux", :needs_linux do
+        expect(env["CC"]).to eq "gcc"
+        expect(env["CXX"]).to eq "g++"
+        expect(env["OBJC"]).to eq "gcc"
+        expect(env["OBJCXX"]).to eq "g++"
+      end
+
+      # We keep versioned name on macOS as /usr/bin/gcc is Clang which may not
+      # be compatible with binaries created with GCC, e.g. if using libstdc++.
+      it "sets versioned CC/CXX on macOS", :needs_macos do
+        expect(env["CC"]).to eq gcc
+        expect(env["CXX"]).to eq gcc.sub("gcc", "g++")
+        expect(env["OBJC"]).to eq gcc
+        expect(env["OBJCXX"]).to eq gcc.sub("gcc", "g++")
       end
     end
   end

@@ -23,9 +23,18 @@ class LinkageChecker
   attr_reader :indirect_deps, :undeclared_deps, :unwanted_system_dylibs
 
   sig { returns(T::Set[String]) }
-  attr_reader :system_dylibs
+  attr_reader :system_dylibs, :broken_dylibs
 
-  sig { params(keg: Keg, formula: T.nilable(Formula), cache_db: CacheStoreDatabase, rebuild_cache: T::Boolean).void }
+  sig { returns(T::Hash[String, T::Array[String]]) }
+  attr_reader :broken_deps
+
+  sig {
+    params(
+      keg: Keg, formula: T.nilable(Formula),
+      cache_db: CacheStoreDatabase[String, T::Hash[T.any(String, Symbol), T.anything]],
+      rebuild_cache: T::Boolean
+    ).void
+  }
   def initialize(keg, formula = nil, cache_db:, rebuild_cache: false)
     @keg = keg
     @formula = T.let(formula || resolve_formula(keg), T.nilable(Formula))
@@ -88,11 +97,11 @@ class LinkageChecker
     display_items("Broken dependencies", @broken_deps, puts_output:)
     display_items("Unwanted system libraries", @unwanted_system_dylibs, puts_output:)
     display_items("Conflicting libraries", @version_conflict_deps, puts_output:)
+    display_items("Indirect dependencies with linkage", @indirect_deps, puts_output:)
+    display_items("Unexpected linkage for no_linkage dependencies", @unexpected_linkage_deps, puts_output:)
     return unless strict
 
-    display_items("Indirect dependencies with linkage", @indirect_deps, puts_output:)
     display_items("Undeclared dependencies with linkage", @undeclared_deps, puts_output:)
-    display_items("Unexpected linkage for no_linkage dependencies", @unexpected_linkage_deps, puts_output:)
     display_items("Files with missing rpath", @files_missing_rpaths, puts_output:)
     display_items "@executable_path references in libraries", @executable_path_dylibs, puts_output:
   end
@@ -103,11 +112,8 @@ class LinkageChecker
 
     issues = [@broken_deps, @broken_dylibs]
     if test
-      issues += [@unwanted_system_dylibs, @version_conflict_deps]
-      if strict
-        issues += [@indirect_deps, @undeclared_deps, @unexpected_linkage_deps,
-                   @files_missing_rpaths, @executable_path_dylibs]
-      end
+      issues += [@unwanted_system_dylibs, @version_conflict_deps, @indirect_deps, @unexpected_linkage_deps]
+      issues += [@undeclared_deps, @files_missing_rpaths, @executable_path_dylibs] if strict
     end
     issues.any?(&:present?)
   end
@@ -123,9 +129,18 @@ class LinkageChecker
   sig { params(file: String).returns(T::Boolean) }
   def broken_dylibs_allowed?(file)
     formula = self.formula
-    return false if formula.nil? || formula.name != "julia"
+    return false if formula.nil?
 
-    file.start_with?("#{formula.prefix.realpath}/share/julia/compiled/")
+    case formula.name
+    when "julia"
+      file.start_with?("#{formula.prefix.realpath}/share/julia/compiled/")
+    when "cyan"
+      file.match?(
+        %r{\A#{Regexp.escape(formula.prefix.realpath.to_s)}/libexec/lib/python\d+\.\d+/site-packages/cyan/extras/},
+      )
+    else
+      false
+    end
   end
 
   sig { params(rebuild_cache: T::Boolean).void }
@@ -198,9 +213,8 @@ class LinkageChecker
           if (dep = dylib_to_dep(dylib))
             broken_dep = (@broken_deps[dep] ||= [])
             broken_dep << dylib unless broken_dep.include?(dylib)
-          elsif system_libraries_exist_in_cache? && dylib_found_in_shared_cache?(dylib)
-            # If we cannot associate the dylib with a dependency, then it may be a system library.
-            # Check the dylib shared cache for the library to verify this.
+          elsif dylib_found_in_shared_cache?(dylib)
+            # In macOS Big Sur and later, system libraries do not exist on-disk and instead exist in a cache.
             @system_dylibs << dylib
           elsif !system_framework?(dylib) && !broken_dylibs_allowed?(file.to_s)
             @broken_dylibs << dylib
@@ -227,25 +241,9 @@ class LinkageChecker
     store.update!(keg_files_dylibs:)
   end
 
-  sig { returns(T::Boolean) }
-  def system_libraries_exist_in_cache?
+  sig { params(_dylib: String).returns(T::Boolean) }
+  def dylib_found_in_shared_cache?(_dylib)
     false
-  end
-
-  sig { params(dylib: String).returns(T::Boolean) }
-  def dylib_found_in_shared_cache?(dylib)
-    require "fiddle"
-    @dyld_shared_cache_contains_path ||= T.let(begin
-      libc = Fiddle.dlopen("/usr/lib/libSystem.B.dylib")
-
-      Fiddle::Function.new(
-        libc["_dyld_shared_cache_contains_path"],
-        [Fiddle::TYPE_CONST_STRING],
-        Fiddle::TYPE_BOOL,
-      )
-    end, T.nilable(Fiddle::Function))
-
-    @dyld_shared_cache_contains_path.call(dylib)
   end
 
   sig {
@@ -266,7 +264,7 @@ class LinkageChecker
                                       .reject { |dep| filter_out.call(dep) }
                                       .map(&:name)
     declared_deps_names = declared_deps_full_names.map do |dep|
-      dep.split("/").last
+      Utils.name_from_full_name(dep)
     end
 
     # Get dependencies marked with :no_linkage
@@ -275,7 +273,7 @@ class LinkageChecker
                                         .select(&:no_linkage?)
                                         .map(&:name)
     no_linkage_deps_names = no_linkage_deps_full_names.map do |dep|
-      dep.split("/").last
+      Utils.name_from_full_name(dep)
     end
 
     recursive_deps = formula.runtime_formula_dependencies(undeclared: false)
@@ -285,7 +283,7 @@ class LinkageChecker
     undeclared_deps = []
     unexpected_linkage_deps = []
     @brewed_dylibs.each_key do |full_name|
-      name = full_name.split("/").last
+      name = Utils.name_from_full_name(full_name)
       next if name == formula.name
 
       # Check if this is a no_linkage dependency with unexpected linkage
@@ -308,8 +306,8 @@ class LinkageChecker
     unnecessary_deps = declared_deps_full_names.reject do |full_name|
       next true if Formula[full_name].bin.directory?
 
-      name = full_name.split("/").last
-      @brewed_dylibs.keys.map { |l| l.split("/").last }.include?(name)
+      name = Utils.name_from_full_name(full_name)
+      @brewed_dylibs.keys.map { |l| Utils.name_from_full_name(l) }.include?(name)
     end
 
     # Remove no_linkage dependencies from unnecessary_deps since they're expected not to have linkage
@@ -321,7 +319,7 @@ class LinkageChecker
     version_hash = {}
     version_conflict_deps = Set.new
     @brewed_dylibs.each_key do |l|
-      name = l.split("/").fetch(-1)
+      name = Utils.name_from_full_name(l)
       unversioned_name, = name.split("@")
       version_hash[unversioned_name] ||= Set.new
       version_hash[unversioned_name] << name

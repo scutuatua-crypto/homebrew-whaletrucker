@@ -53,17 +53,17 @@ module Homebrew
 
             if replacement &&
                (replacement_method_name = replacement[/\A`([^`]*)`\Z/, 1]) && (
-               (replacement_method_name.count(".") + replacement_method_name.count("#")) <= 1
-             )
+                 (replacement_method_name.count(".") + replacement_method_name.count("#")) <= 1
+               )
               replacement_method_name = replacement_method_name.delete_prefix(object.namespace.to_s)
               replacement = "{#{replacement_method_name}}"
             end
 
-            if method && !method.include?('#{')
+            if method && method.index('#{').nil?
               description = "Calling #{method} is #{type}"
-              description += ", use #{replacement} instead" if replacement && !replacement.include?('#{')
+              description += ", use #{replacement} instead" if replacement && replacement.index('#{').nil?
               description += "."
-            elsif replacement && !replacement.include?('#{')
+            elsif replacement && replacement.index('#{').nil?
               description = "Use #{replacement} instead."
             else
               description = ""
@@ -91,7 +91,7 @@ module Homebrew
 
         # Warn about undocumented non-private APIs.
         if handler && api && api != "private" && visibility != "private" &&
-           content.chomp.empty? && !SELF_EXPLANATORY_METHODS.include?(object&.name)
+           content.chomp.empty? && SELF_EXPLANATORY_METHODS.none?(object&.name)
           stmt = handler.statement
           log.warn "#{api.capitalize} API should be documented:\n  " \
                    "in `#{handler.parser.file}`:#{stmt.line}:\n\n#{stmt.show}\n"

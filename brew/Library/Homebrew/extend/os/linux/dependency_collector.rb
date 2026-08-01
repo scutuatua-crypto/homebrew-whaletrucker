@@ -2,10 +2,22 @@
 # frozen_string_literal: true
 
 require "os/linux/glibc"
+require "sandbox"
 
 module OS
   module Linux
     module DependencyCollector
+      sig { params(related_formula_names: T::Set[String]).returns(T.nilable(Dependency)) }
+      def bubblewrap_dep_if_needed(related_formula_names)
+        return unless bubblewrap_dependency_needed?
+        return if building_global_dep_tree?
+        return if related_formula_names.include?(BUBBLEWRAP)
+        return if global_dep_tree[BUBBLEWRAP]&.intersect?(related_formula_names)
+        return unless formula_for(BUBBLEWRAP)
+
+        Dependency.new(BUBBLEWRAP, [:implicit])
+      end
+
       sig { params(related_formula_names: T::Set[String]).returns(T.nilable(Dependency)) }
       def gcc_dep_if_needed(related_formula_names)
         # gcc is required for libgcc_s.so.1 if glibc or gcc are too old
@@ -29,22 +41,40 @@ module OS
         Dependency.new(GLIBC, [:implicit])
       end
 
+      sig { returns(T::Hash[String, T::Set[String]]) }
+      def global_dep_tree
+        @@global_dep_tree
+      end
+
       private
 
       GLIBC = "glibc"
       GCC = OS::LINUX_PREFERRED_GCC_RUNTIME_FORMULA
-      private_constant :GLIBC, :GCC
+      BUBBLEWRAP = "bubblewrap"
+      private_constant :GLIBC, :GCC, :BUBBLEWRAP
 
       sig { void }
       def init_global_dep_tree_if_needed!
-        return unless ::DevelopmentTools.needs_build_formulae?
         return if building_global_dep_tree?
-        return unless global_dep_tree.empty?
+
+        sandbox_tree_needed = bubblewrap_dependency_needed?
+        build_formulae_tree_needed = ::DevelopmentTools.needs_build_formulae?
+        return if !sandbox_tree_needed && !build_formulae_tree_needed
+        return if (!sandbox_tree_needed || global_dep_tree.key?(BUBBLEWRAP)) &&
+                  (!build_formulae_tree_needed || (global_dep_tree.key?(GLIBC) && global_dep_tree.key?(GCC)))
 
         building_global_dep_tree!
-        global_dep_tree[GLIBC] = Set.new(global_deps_for(GLIBC))
-        # gcc depends on glibc
-        global_dep_tree[GCC] = Set.new([*global_deps_for(GCC), GLIBC, *@@global_dep_tree[GLIBC]])
+        if sandbox_tree_needed
+          include_build = OS.not_tier_one_configuration? || build_formulae_tree_needed
+          global_dep_tree[BUBBLEWRAP] = Set.new(global_deps_for(BUBBLEWRAP, include_build:))
+        end
+        if build_formulae_tree_needed
+          global_dep_tree[GLIBC] = Set.new(global_deps_for(GLIBC))
+          # gcc depends on glibc
+          global_dep_tree[GCC] = Set.new([*global_deps_for(GCC), GLIBC, *@@global_dep_tree[GLIBC]])
+          # bubblewrap depends on gcc
+          global_dep_tree[BUBBLEWRAP]&.merge([GCC, *@@global_dep_tree[GCC]])
+        end
         built_global_dep_tree!
       end
 
@@ -56,16 +86,28 @@ module OS
         nil
       end
 
-      sig { params(name: String).returns(T::Array[String]) }
-      def global_deps_for(name)
+      sig { returns(T::Boolean) }
+      def bubblewrap_dependency_needed?
+        return false unless ::Homebrew::EnvConfig.sandbox_linux?
+        return false if ENV["HOMEBREW_TESTS"]
+        return false if OS::Linux::Sandbox.landlock?
+
+        ::Sandbox.executable.blank?
+      end
+
+      sig { params(name: String, include_build: T::Boolean).returns(T::Array[String]) }
+      def global_deps_for(name, include_build: true)
         @global_deps_for ||= T.let({}, T.nilable(T::Hash[String, T::Array[String]]))
         # Always strip out glibc and gcc from all parts of dependency tree when
         # we're calculating their dependency trees. Other parts of Homebrew will
         # catch any circular dependencies.
-        @global_deps_for[name] ||= if (formula = formula_for(name))
-          formula.deps.map(&:name).flat_map do |dep|
-            [dep, *global_deps_for(dep)].compact
-          end.uniq
+        @global_deps_for["#{name}|#{include_build}"] ||= if (formula = formula_for(name))
+          formula.deps.filter_map do |dep|
+            next if dep.test? && !dep.build?
+            next if dep.build? && !include_build
+
+            [dep.name, *global_deps_for(dep.name, include_build:)].compact
+          end.flatten.uniq
         else
           []
         end
@@ -76,11 +118,6 @@ module OS
       # rubocop:disable Style/ClassVars
       @@global_dep_tree = T.let({}, T::Hash[String, T::Set[String]])
       @@building_global_dep_tree = T.let(false, T::Boolean)
-
-      sig { returns(T::Hash[String, T::Set[String]]) }
-      def global_dep_tree
-        @@global_dep_tree
-      end
 
       sig { void }
       def building_global_dep_tree!

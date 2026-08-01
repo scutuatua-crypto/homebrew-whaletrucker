@@ -4,12 +4,12 @@
 # HOMEBREW_FORCE_BREW_WRAPPER is set by the user environment.
 # shellcheck disable=SC2154
 odie-with-wrapper-message() {
-  source "${HOMEBREW_LIBRARY}/Homebrew/utils/helpers.sh"
+  source "${HOMEBREW_LIBRARY}/Homebrew/utils.sh"
 
   local CUSTOM_MESSAGE="${1}"
   local HOMEBREW_FORCE_BREW_WRAPPER_WITHOUT_BREW="${HOMEBREW_FORCE_BREW_WRAPPER%/brew}"
 
-  odie <<EOS
+  onoe <<EOS
 conflicting Homebrew wrapper configuration!
 HOMEBREW_FORCE_BREW_WRAPPER was set to ${HOMEBREW_FORCE_BREW_WRAPPER}
 ${CUSTOM_MESSAGE}
@@ -22,6 +22,13 @@ Ensure your shell configuration contains:
 or that ${HOMEBREW_FORCE_BREW_WRAPPER_WITHOUT_BREW} comes before ${HOMEBREW_PREFIX}/bin in your PATH:
   export PATH="${HOMEBREW_FORCE_BREW_WRAPPER_WITHOUT_BREW}:${HOMEBREW_PREFIX}/bin:\$PATH"
 EOS
+
+  if [[ -n "${HOMEBREW_FORCE_BREW_WRAPPER_HELP_MESSAGE:-}" ]]
+  then
+    echo "${HOMEBREW_FORCE_BREW_WRAPPER_HELP_MESSAGE}" >&2
+  fi
+
+  exit 1
 }
 
 check-brew-wrapper() {
@@ -62,7 +69,7 @@ check-brew-wrapper() {
 
     if ((HOMEBREW_BREW_CALLER_CHECK_EXIT_CODE != 0))
     then
-      source "${HOMEBREW_LIBRARY}/Homebrew/utils/helpers.sh"
+      source "${HOMEBREW_LIBRARY}/Homebrew/utils.sh"
       # Error message already printed above when populating `HOMEBREW_BREW_CALLER`.
       odie "failed to check the path to the parent process!"
     fi

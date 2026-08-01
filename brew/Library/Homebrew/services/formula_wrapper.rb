@@ -50,17 +50,28 @@ module Homebrew
       end
 
       # Delegate access to `formula.service.timed?`.
-      # TODO: this should either be T::Boolean or renamed to `timed`
-      sig { returns(T.nilable(T::Boolean)) }
+      sig { returns(T::Boolean) }
       def timed?
-        @timed ||= T.let((load_service.timed? if service?), T.nilable(T::Boolean))
+        return @timed unless @timed.nil?
+
+        @timed = T.let(service? && load_service.timed?, T.nilable(T::Boolean))
+        @timed ||= false
       end
 
       # Delegate access to `formula.service.keep_alive?`.
-      # TODO: this should either be T::Boolean or renamed to `keep_alive`
-      sig { returns(T.nilable(T::Boolean)) }
+      sig { returns(T::Boolean) }
       def keep_alive?
-        @keep_alive ||= T.let((load_service.keep_alive? if service?), T.nilable(T::Boolean))
+        return @keep_alive unless @keep_alive.nil?
+
+        @keep_alive = T.let(service? && load_service.keep_alive?, T.nilable(T::Boolean))
+        @keep_alive ||= false
+      end
+
+      sig { returns(T::Array[Pathname]) }
+      def path_dirs
+        return [] unless service?
+
+        load_service.path_dirs
       end
 
       # service_name delegates with formula.plist_name or formula.service_name
@@ -86,6 +97,21 @@ module Homebrew
             formula.systemd_service_path
           end, T.nilable(Pathname)
         )
+      end
+
+      sig { returns(Pathname) }
+      def timer_file
+        @timer_file ||= T.let(formula.systemd_timer_path, T.nilable(Pathname))
+      end
+
+      sig { returns(String) }
+      def timer_name
+        @timer_name ||= T.let(timer_file.basename.to_s, T.nilable(String))
+      end
+
+      sig { returns(Pathname) }
+      def timer_dest
+        dest_dir + timer_file.basename
       end
 
       # Whether the service should be launched at startup
@@ -118,19 +144,6 @@ module Homebrew
         formula.any_version_installed?
       end
 
-      # Returns `true` if the plist file exists.
-      sig { returns(T::Boolean) }
-      def plist?
-        return false unless installed?
-        return true if service_file.file?
-        return false unless formula.opt_prefix.exist?
-        return true if Keg.for(formula.opt_prefix).plist_installed?
-
-        false
-      rescue NotAKegError
-        false
-      end
-
       sig { void }
       def reset_cache!
         @status_output_success_type = nil
@@ -143,7 +156,7 @@ module Homebrew
           reset_cache! unless cached
           status_success
         else # System.systemctl?
-          System::Systemctl.quiet_run("status", service_file.basename)
+          System::Systemctl.quiet_run("status", timed? ? timer_name : service_file.basename)
         end
       end
 
@@ -165,6 +178,7 @@ module Homebrew
       def owner
         if System.launchctl? && dest.exist?
           # read the username from the plist file
+          require "plist"
           plist = begin
             Plist.parse_xml(dest.read, marshal: false)
           rescue

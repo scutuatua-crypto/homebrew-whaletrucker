@@ -1,4 +1,4 @@
-# typed: true # rubocop:todo Sorbet/StrictSigil
+# typed: strict
 # frozen_string_literal: true
 
 require "cask/cache"
@@ -8,7 +8,9 @@ require "utils/curl"
 require "utils/output"
 require "utils/path"
 require "extend/hash/keys"
+require "extend/ENV/sensitive"
 require "api"
+require "trust"
 
 module Cask
   # Loads a cask from various sources.
@@ -39,8 +41,15 @@ module Cask
       sig { returns(String) }
       attr_reader :content
 
-      sig { returns(T.nilable(Tap)) }
+      sig { overridable.returns(T.nilable(Tap)) }
       attr_reader :tap
+
+      sig { void }
+      def initialize
+        @content = T.let("", String)
+        @tap = T.let(nil, T.nilable(Tap))
+        @config = T.let(nil, T.nilable(Config))
+      end
 
       private
 
@@ -68,12 +77,15 @@ module Cask
         content = ref.to_str
 
         # Cache compiled regex
-        @regex ||= begin
-          token  = /(?:"[^"]*"|'[^']*')/
-          curly  = /\(\s*#{token.source}\s*\)\s*\{.*\}/
-          do_end = /\s+#{token.source}\s+do(?:\s*;\s*|\s+).*end/
-          /\A\s*cask(?:#{curly.source}|#{do_end.source})\s*\Z/m
-        end
+        @regex ||= T.let(
+          begin
+            token  = /(?:"[^"]*"|'[^']*')/
+            curly  = /\(\s*#{token.source}\s*\)\s*\{.*\}/
+            do_end = /\s+#{token.source}\s+do(?:\s*;\s*|\s+).*end/
+            /\A\s*cask(?:#{curly.source}|#{do_end.source})\s*\Z/m
+          end,
+          T.nilable(Regexp),
+        )
 
         return unless content.match?(@regex)
 
@@ -84,14 +96,17 @@ module Cask
       def initialize(content, tap: T.unsafe(nil))
         super()
 
-        @content = content.dup.force_encoding("UTF-8")
-        @tap = tap
+        @content = T.let(content.dup.force_encoding("UTF-8"), String)
+        @tap = T.let(tap, T.nilable(Tap))
       end
 
+      sig { override.params(config: T.nilable(Config)).returns(Cask) }
       def load(config:)
         @config = config
 
-        instance_eval(content, __FILE__, __LINE__)
+        ENV.clear_sensitive_environment_for_eval! do
+          instance_eval(content, __FILE__, __LINE__)
+        end
       end
     end
 
@@ -122,11 +137,18 @@ module Cask
       def self.invalid_path?(pathname, valid_extnames: %w[.rb .json])
         return true if valid_extnames.exclude?(pathname.extname)
 
-        @invalid_basenames ||= %w[INSTALL_RECEIPT.json sbom.spdx.json].freeze
+        @invalid_basenames ||= T.let(%w[INSTALL_RECEIPT.json sbom.spdx.json].freeze, T.nilable(T::Array[String]))
         @invalid_basenames.include?(pathname.basename.to_s)
       end
 
-      attr_reader :token, :path
+      sig { returns(String) }
+      attr_reader :token
+
+      sig { returns(Pathname) }
+      attr_reader :path
+
+      sig { params(from_installed_caskfile: T::Boolean).void }
+      attr_writer :from_installed_caskfile
 
       sig { params(path: T.any(Pathname, String), token: String).void }
       def initialize(path, token: T.unsafe(nil))
@@ -134,10 +156,11 @@ module Cask
 
         path = Pathname(path).expand_path
 
-        @token = path.basename(path.extname).to_s
-        @path = path
-        @tap = Tap.from_path(path) || Homebrew::API.tap_from_source_download(path)
-        @from_installed_caskfile = false
+        @token = T.let(CaskLoader.token_from_path(path), String)
+        @path = T.let(path, Pathname)
+        @tap = T.let(Tap.from_path(path) || Homebrew::API.tap_from_source_download(path), T.nilable(Tap))
+        @from_installed_caskfile = T.let(false, T::Boolean)
+        @api_fallback = T.let(true, T::Boolean)
       end
 
       sig { override.params(config: T.nilable(Config)).returns(Cask) }
@@ -146,29 +169,65 @@ module Cask
         raise CaskUnavailableError.new(token, "'#{path}' is not readable.") unless path.readable?
         raise CaskUnavailableError.new(token, "'#{path}' is not a file.")   unless path.file?
 
+        Homebrew::Trust.require_trusted_cask!(token, path)
+
         @content = path.read(encoding: "UTF-8")
         @config = config
 
         if !self.class.invalid_path?(path, valid_extnames: %w[.json]) &&
-           (from_json = JSON.parse(@content).presence) &&
-           from_json.is_a?(Hash)
-          return FromAPILoader.new(token, from_json:, path:,
-from_installed_caskfile: @from_installed_caskfile).load(config:)
+           (from_json = JSON.parse(@content)) &&
+           from_json.is_a?(Hash) &&
+           (@from_installed_caskfile || from_json.present?)
+          begin
+            from_internal_json = path.to_s.end_with?(".internal.json")
+            return FromAPILoader.new(
+              token,
+              from_json:,
+              path:,
+              from_installed_caskfile: @from_installed_caskfile,
+              from_internal_json:,
+              api_fallback:            @api_fallback,
+            ).load(config:)
+          rescue CaskInvalidError => e
+            if @from_installed_caskfile
+              error = CaskUnreadableError.new(token, e.reason)
+              error.set_backtrace e.backtrace
+              raise error
+            end
+            raise
+          end
         end
 
         begin
-          instance_eval(content, path).tap do |cask|
-            raise CaskUnreadableError.new(token, "'#{path}' does not contain a cask.") unless cask.is_a?(Cask)
+          ENV.clear_sensitive_environment_for_eval! do
+            instance_eval(content, path.to_s).tap do |cask|
+              raise CaskUnreadableError.new(token, "'#{path}' does not contain a cask.") unless cask.is_a?(Cask)
+            end
           end
         rescue NameError, ArgumentError, ScriptError => e
           error = CaskUnreadableError.new(token, e.message)
           error.set_backtrace e.backtrace
           raise error
+        rescue CaskInvalidError => e # e.g. NoMethodError from removed DSL methods, wrapped
+          # as CaskInvalidError by Cask#refresh before reaching here.
+          if @from_installed_caskfile
+            error = CaskUnreadableError.new(token, e.reason)
+            error.set_backtrace e.backtrace
+            raise error
+          end
+          raise
         end
       end
 
       private
 
+      sig {
+        override.params(
+          header_token: String,
+          options:      T.untyped,
+          block:        T.nilable(T.proc.bind(DSL).void),
+        ).returns(Cask)
+      }
       def cask(header_token, **options, &block)
         raise CaskTokenMismatchError.new(token, header_token) if token != header_token
 
@@ -186,10 +245,13 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
         return if Homebrew::EnvConfig.forbid_packages_from_paths?
 
         # Cache compiled regex
-        @uri_regex ||= begin
-          uri_regex = ::URI::RFC2396_PARSER.make_regexp
-          Regexp.new("\\A#{uri_regex.source}\\Z", uri_regex.options)
-        end
+        @uri_regex ||= T.let(
+          begin
+            uri_regex = ::URI::RFC2396_PARSER.make_regexp
+            Regexp.new("\\A#{uri_regex.source}\\Z", uri_regex.options)
+          end,
+          T.nilable(Regexp),
+        )
 
         uri = ref.to_s
         return unless uri.match?(@uri_regex)
@@ -200,23 +262,31 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
         new(uri)
       end
 
-      attr_reader :url, :name
+      sig { returns(URI::Generic) }
+      attr_reader :url
+
+      sig { returns(String) }
+      attr_reader :name
 
       sig { params(url: T.any(URI::Generic, String)).void }
       def initialize(url)
-        @url = URI(url)
-        @name = File.basename(T.must(@url.path))
+        @url = T.let(URI(url), URI::Generic)
+        url_path = @url.path
+        raise "unexpected nil url.path" unless url_path
+
+        @name = T.let(File.basename(url_path), String)
         super Cache.path/name
       end
 
+      sig { override.params(config: T.nilable(Config)).returns(Cask) }
       def load(config:)
         path.dirname.mkpath
 
         if ALLOWED_URL_SCHEMES.exclude?(url.scheme)
           raise UnsupportedInstallationMethod,
                 "Non-checksummed download of #{name} formula file from an arbitrary URL is unsupported! " \
-                "`brew extract` or `brew create` and `brew tap-new` to create a formula file in a tap " \
-                "on GitHub instead."
+                "`brew version-install` to install a formula file from your own custom tap " \
+                "instead."
         end
 
         begin
@@ -232,7 +302,7 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
 
     # Loads a cask from a specific tap.
     class FromTapLoader < FromPathLoader
-      sig { returns(Tap) }
+      sig { override.returns(Tap) }
       attr_reader :tap
 
       sig {
@@ -245,6 +315,14 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
 
         return unless (token_tap_type = CaskLoader.tap_cask_token_type(ref, warn:))
 
+        loader_from_token_tap_type(token_tap_type)
+      end
+
+      sig {
+        params(token_tap_type: [String, Tap, T.nilable(Symbol)])
+          .returns(T.nilable(T.any(T.attached_class, FromAPILoader)))
+      }
+      def self.loader_from_token_tap_type(token_tap_type)
         token, tap, type = token_tap_type
 
         if type == :migration && tap.core_cask_tap? && (loader = FromAPILoader.try_new(token))
@@ -256,14 +334,18 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
 
       sig { params(tapped_token: String).void }
       def initialize(tapped_token)
-        tap, token = Tap.with_cask_token(tapped_token)
+        tap_with_token = Tap.with_cask_token(tapped_token)
+        raise "unexpected nil Tap.with_cask_token" unless tap_with_token
+
+        tap, token = tap_with_token
         cask = CaskLoader.find_cask_in_tap(token, tap)
         super cask
+        @tap = T.let(tap, Tap)
       end
 
       sig { override.params(config: T.nilable(Config)).returns(Cask) }
       def load(config:)
-        raise TapCaskUnavailableError.new(tap, token) unless T.must(tap).installed?
+        raise TapCaskUnavailableError.new(tap, token) unless tap.installed?
 
         super
       end
@@ -275,7 +357,7 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
 
       sig {
         params(ref: T.any(String, Pathname, Cask, URI::Generic), warn: T::Boolean)
-          .returns(T.nilable(T.attached_class))
+          .returns(T.nilable(FromInstanceLoader))
       }
       def self.try_new(ref, warn: false)
         new(ref) if ref.is_a?(Cask)
@@ -286,6 +368,8 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
         @cask = cask
       end
 
+      # This is a false positive incompatibililty warning, due to Kernel#load being overridden.
+      sig { override(allow_incompatible: true).params(config: T.nilable(Config)).returns(Cask) } # rubocop:disable Sorbet/AllowIncompatibleOverride
       def load(config:)
         @cask
       end
@@ -306,13 +390,13 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
 
       sig {
         params(ref: T.any(String, Pathname, Cask, URI::Generic), warn: T::Boolean)
-          .returns(T.nilable(T.attached_class))
+          .returns(T.nilable(FromAPILoader))
       }
       def self.try_new(ref, warn: false)
         return if Homebrew::EnvConfig.no_install_from_api?
         return unless ref.is_a?(String)
         return unless (token = ref[HOMEBREW_DEFAULT_TAP_CASK_REGEX, :token])
-        if Homebrew::API.cask_tokens.exclude?(token) &&
+        if !Homebrew::API.cask_token?(token) &&
            !Homebrew::API.cask_renames.key?(token)
           return
         end
@@ -329,33 +413,105 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
           from_json:               T.nilable(T::Hash[String, T.untyped]),
           path:                    T.nilable(Pathname),
           from_installed_caskfile: T::Boolean,
+          from_internal_json:      T::Boolean,
+          api_fallback:            T::Boolean,
         ).void
       }
-      def initialize(token, from_json: T.unsafe(nil), path: nil, from_installed_caskfile: false)
-        @token = token.sub(%r{^homebrew/(?:homebrew-)?cask/}i, "")
-        @sourcefile_path = path || Homebrew::API.cached_cask_json_file_path
-        @path = path || CaskLoader.default_path(@token)
+      def initialize(token, from_json: T.unsafe(nil), path: nil, from_installed_caskfile: false,
+                     from_internal_json: false, api_fallback: true)
+        @token = T.let(token.sub(%r{^homebrew/(?:homebrew-)?cask/}i, ""), String)
+        @sourcefile_path = T.let(
+          if path
+            path
+          elsif from_json
+            from_internal_json ? Homebrew::API::Internal.cached_packages_json_file_path : Homebrew::API::Cask.cached_json_file_path
+          else
+            Homebrew::API.cached_cask_json_file_path
+          end,
+          Pathname,
+        )
+        @path = T.let(path || CaskLoader.default_path(@token), Pathname)
         @from_json = from_json
         @from_installed_caskfile = from_installed_caskfile
+        @from_internal_json = from_internal_json
+        @api_fallback = api_fallback
       end
 
+      # This is a false positive incompatibililty warning, due to Kernel#load being overridden.
+      sig { override(allow_incompatible: true).params(config: T.nilable(Config)).returns(Cask) } # rubocop:disable Sorbet/AllowIncompatibleOverride
       def load(config:)
-        json_cask = from_json
-        json_cask ||= if Homebrew::EnvConfig.use_internal_api?
-          Homebrew::API::Internal.cask_hashes.fetch(token)
+        if (api_source = from_json)
+          if @from_internal_json
+            load_from_internal_json(config:, api_source:)
+          else
+            load_from_json(config:, api_source:)
+          end
         else
-          Homebrew::API::Cask.all_casks.fetch(token)
+          load_from_internal_api(config:)
+        end
+      end
+
+      private
+
+      sig { params(config: T.nilable(Config)).returns(Cask) }
+      def load_from_internal_api(config:)
+        cask_struct = Homebrew::API::Internal.cask_struct(token)
+        api_source = Homebrew::API::Internal.cask_hashes.fetch(token)
+        tap_git_head = Homebrew::API::Internal.cask_tap_git_head
+
+        load_from_struct(config:, cask_struct:, api_source:, tap_git_head:, internal_api: true)
+      end
+
+      sig { params(config: T.nilable(Config), api_source: T::Hash[String, T.untyped]).returns(Cask) }
+      def load_from_json(config:, api_source:)
+        if @from_installed_caskfile
+          api_source = api_source.dup
+          api_source["version"] = api_source["version"].presence
+          api_source["version"] ||= @sourcefile_path.dirname.dirname.dirname.basename.to_s.presence
+          if api_source["version"].nil? || api_source["artifacts"].nil?
+            installed_tab = CaskLoader.load_installed_tab(token)
+            api_source["version"] ||= installed_tab.version.presence
+            api_source["artifacts"] ||= CaskLoader.resolve_installed_artifacts(
+              token, installed_tab.uninstall_artifacts, tap: installed_tab.tap, api_fallback: @api_fallback
+            )
+          end
         end
 
-        cask_struct = Homebrew::API::Cask.generate_cask_struct_hash(json_cask, ignore_types: @from_installed_caskfile)
+        tap_git_head = api_source["tap_git_head"]
+        cask_struct = Homebrew::API::Cask::CaskStructGenerator.generate_cask_struct_hash(
+          api_source, ignore_types: @from_installed_caskfile
+        )
 
+        load_from_struct(config:, cask_struct:, api_source:, tap_git_head:)
+      end
+
+      sig { params(config: T.nilable(Config), api_source: T::Hash[String, T.untyped]).returns(Cask) }
+      def load_from_internal_json(config:, api_source:)
+        api_source = api_source.dup
+        tap_git_head = api_source.delete("tap_git_head")
+        cask_struct = Homebrew::API::CaskStruct.deserialize(api_source)
+
+        load_from_struct(config:, cask_struct:, api_source:, tap_git_head:, internal_api: true)
+      end
+
+      sig {
+        params(
+          config:       T.nilable(Config),
+          cask_struct:  Homebrew::API::CaskStruct,
+          api_source:   T::Hash[String, T.untyped],
+          tap_git_head: T.nilable(String),
+          internal_api: T::Boolean,
+        ).returns(Cask)
+      }
+      def load_from_struct(config:, cask_struct:, api_source:, tap_git_head:, internal_api: false)
         cask_options = {
-          loaded_from_api: true,
-          api_source:      json_cask,
-          sourcefile_path: @sourcefile_path,
-          source:          JSON.pretty_generate(json_cask),
+          loaded_from_api:          true,
+          loaded_from_internal_api: internal_api,
+          api_source:,
+          sourcefile_path:          @sourcefile_path,
+          source:                   JSON.pretty_generate(api_source),
           config:,
-          loader:          self,
+          loader:                   self,
         }
 
         if (tap_string = cask_struct.tap_string)
@@ -363,28 +519,34 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
         end
 
         api_cask = Cask.new(token, **cask_options) do
-          version cask_struct.version
-          sha256 cask_struct.sha256
+          localised_cask_struct = if cask_struct.language_variations.empty?
+            cask_struct
+          else
+            cask_struct.localise(cask.config.languages)
+          end
 
-          url(*cask_struct.url_args, **cask_struct.url_kwargs)
-          cask_struct.names.each do |cask_name|
+          version localised_cask_struct.version
+          sha256 localised_cask_struct.sha256
+
+          url(*localised_cask_struct.url_args, **localised_cask_struct.url_kwargs)
+          localised_cask_struct.names.each do |cask_name|
             name cask_name
           end
-          desc cask_struct.desc if cask_struct.desc?
-          homepage cask_struct.homepage if cask_struct.homepage?
+          desc localised_cask_struct.desc if localised_cask_struct.desc?
+          homepage localised_cask_struct.homepage if localised_cask_struct.homepage?
 
-          deprecate!(**cask_struct.deprecate_args) if cask_struct.deprecate?
-          disable!(**cask_struct.disable_args) if cask_struct.disable?
+          deprecate!(**localised_cask_struct.deprecate_args) if localised_cask_struct.deprecate?
+          disable!(**localised_cask_struct.disable_args) if localised_cask_struct.disable?
 
-          auto_updates cask_struct.auto_updates if cask_struct.auto_updates?
-          conflicts_with(**cask_struct.conflicts_with_args) if cask_struct.conflicts?
+          auto_updates localised_cask_struct.auto_updates if localised_cask_struct.auto_updates?
+          conflicts_with(**localised_cask_struct.conflicts_with_args) if localised_cask_struct.conflicts?
 
-          cask_struct.renames.each do |from, to|
+          localised_cask_struct.renames.each do |from, to|
             rename from, to
           end
 
-          if cask_struct.depends_on?
-            args = cask_struct.depends_on_args
+          if localised_cask_struct.depends_on?
+            args = localised_cask_struct.depends_on_args
             begin
               depends_on(**args)
             rescue MacOSVersion::Error => e
@@ -393,15 +555,25 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
             end
           end
 
-          container(**cask_struct.container_args) if cask_struct.container?
+          if localised_cask_struct.container?
+            container(nested: localised_cask_struct.container_args[:nested],
+                      type:   localised_cask_struct.container_args[:type])
+          end
 
-          cask_struct.artifacts(appdir:).each do |key, args, kwargs, block|
+          localised_cask_struct.artifacts(appdir:).each do |key, args, kwargs, block|
             send(key, *args, **kwargs, &block)
           end
 
-          caveats cask_struct.caveats(appdir:) if cask_struct.caveats?
+          caveats T.must(localised_cask_struct.caveats(appdir:)) if localised_cask_struct.caveats?
+
+          if localised_cask_struct.caveats_rosetta
+            caveats do
+              # Dynamically defined via `caveat :requires_rosetta` — Sorbet can't resolve it.
+              T.unsafe(self).requires_rosetta
+            end
+          end
         end
-        api_cask.populate_from_api!(cask_struct)
+        api_cask.populate_from_api!(cask_struct, tap_git_head:)
         api_cask
       end
     end
@@ -409,6 +581,8 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
     # Loader which tries loading casks from tap paths, failing
     # if the same token exists in multiple taps.
     class FromNameLoader < FromTapLoader
+      extend ::Utils::Output::Mixin
+
       sig {
         override.params(ref: T.any(String, Pathname, Cask, URI::Generic), warn: T::Boolean)
                 .returns(T.nilable(T.any(T.attached_class, FromAPILoader)))
@@ -417,12 +591,23 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
         return unless ref.is_a?(String)
         return unless ref.match?(/\A#{HOMEBREW_TAP_CASK_TOKEN_REGEX}\Z/o)
 
-        token = ref
+        token = ref.downcase
 
         # If it exists in the default tap, never treat it as ambiguous with another tap.
-        if (core_cask_tap = CoreCaskTap.instance).installed? &&
-           (core_cask_loader = super("#{core_cask_tap}/#{token}", warn:))&.path&.exist?
-          return core_cask_loader
+        if (core_cask_tap = CoreCaskTap.instance).installed? && (token_tap_type = CaskLoader.tap_cask_token_type(
+          "#{core_cask_tap}/#{token}", warn: false
+        ))
+          migrated_token, migrated_tap, type = token_tap_type
+
+          if warn && [:rename, :migration].include?(type) &&
+             !(type == :migration && migrated_tap.core_tap?)
+            opoo "Cask #{token} was renamed to " \
+                 "#{migrated_tap.core_cask_tap? ? migrated_token : "#{migrated_tap}/#{migrated_token}"}."
+          end
+
+          if (core_cask_loader = loader_from_token_tap_type(token_tap_type))&.path&.exist?
+            return core_cask_loader
+          end
         end
 
         loaders = Tap.select { |tap| tap.installed? && !tap.core_cask_tap? }
@@ -442,30 +627,31 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
     # Loader which loads a cask from the installed cask file.
     class FromInstalledPathLoader < FromPathLoader
       sig {
-        override.params(ref: T.any(String, Pathname, Cask, URI::Generic), warn: T::Boolean)
-                .returns(T.nilable(T.attached_class))
+        override.params(ref: T.any(String, Pathname, Cask, URI::Generic), warn: T::Boolean,
+                        api_fallback: T::Boolean).returns(T.nilable(T.attached_class))
       }
-      def self.try_new(ref, warn: false)
+      def self.try_new(ref, warn: false, api_fallback: true)
         token = if ref.is_a?(String)
           ref
         elsif ref.is_a?(Pathname)
-          ref.basename(ref.extname).to_s
+          CaskLoader.token_from_path(ref)
         end
         return unless token
 
         possible_installed_cask = Cask.new(token)
         return unless (installed_caskfile = possible_installed_cask.installed_caskfile)
 
-        new(installed_caskfile)
+        new(installed_caskfile, api_fallback:)
       end
 
-      sig { params(path: T.any(Pathname, String), token: String).void }
-      def initialize(path, token: "")
-        super
+      sig { params(path: T.any(Pathname, String), token: String, api_fallback: T::Boolean).void }
+      def initialize(path, token: "", api_fallback: true)
+        super(path, token:)
 
         installed_tap = Cask.new(@token).tab.tap
         @tap = installed_tap if installed_tap
-        @from_installed_caskfile = true
+        @from_installed_caskfile = T.let(true, T::Boolean)
+        @api_fallback = api_fallback
       end
     end
 
@@ -488,17 +674,28 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
         super CaskLoader.default_path(token)
       end
 
+      sig { override.params(config: T.nilable(Config)).returns(Cask) }
       def load(config:)
         raise CaskUnavailableError.new(token, "No Cask with this name exists.")
       end
     end
 
+    # NOTE: Using `WithoutRuntime` to avoid Sorbet wrapping this method,
+    # which would interfere with RSpec mocking of this class method.
+    T::Sig::WithoutRuntime.sig { params(ref: T.any(String, Pathname, Cask, URI::Generic)).returns(Pathname) }
     def self.path(ref)
-      self.for(ref, need_path: true).path
+      T.cast(self.for(ref, need_path: true), T.any(FromAPILoader, FromPathLoader)).path
     end
 
+    # NOTE: Using `WithoutRuntime` to avoid Sorbet wrapping this method,
+    # which would interfere with RSpec mocking of this class method.
+    T::Sig::WithoutRuntime.sig {
+      params(ref: T.any(String, Symbol, Pathname, Cask, URI::Generic), config: T.nilable(Config),
+             warn: T::Boolean).returns(Cask)
+    }
     def self.load(ref, config: nil, warn: true)
-      self.for(ref, warn:).load(config:)
+      normalized_ref = ref.is_a?(Symbol) ? ref.to_s : ref
+      self.for(normalized_ref, warn:).load(config:)
     end
 
     sig { params(tapped_token: String, warn: T::Boolean).returns(T.nilable([String, Tap, T.nilable(Symbol)])) }
@@ -525,7 +722,6 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
             new_token = new_tap_name
           end
         end
-        new_tap.ensure_installed!
         new_tapped_token = "#{new_tap}/#{new_token}"
 
         if tapped_token != new_tapped_token
@@ -538,11 +734,22 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
         end
       end
 
-      opoo "Cask #{old_token} was renamed to #{new_token}." if warn && old_token && new_token
+      if warn && old_token && new_token
+        destination_exists = find_cask_in_tap(token, tap).exist? ||
+                             (tap.core_cask_tap? && !Homebrew::EnvConfig.no_install_from_api? &&
+                              Homebrew::API.cask_token?(token))
+        opoo "Cask #{old_token} was renamed to #{new_token}." if destination_exists
+      end
 
       [token, tap, type]
     end
 
+    # NOTE: Using `WithoutRuntime` to avoid Sorbet wrapping this method,
+    # which would interfere with RSpec mocking of this class method.
+    T::Sig::WithoutRuntime.sig {
+      params(ref: T.any(String, Pathname, Cask, URI::Generic), need_path: T::Boolean, warn: T::Boolean)
+        .returns(ILoader)
+    }
     def self.for(ref, need_path: false, warn: true)
       [
         FromInstanceLoader,
@@ -560,6 +767,8 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
           return loader
         end
       end
+
+      raise CaskError, "No cask loader found for #{ref.inspect}"
     end
 
     sig { params(ref: String, config: T.nilable(Config), warn: T::Boolean).returns(Cask) }
@@ -580,18 +789,149 @@ from_installed_caskfile: @from_installed_caskfile).load(config:)
       end
     end
 
-    sig { params(path: Pathname, config: T.nilable(Config), warn: T::Boolean).returns(Cask) }
-    def self.load_from_installed_caskfile(path, config: nil, warn: true)
-      loader = FromInstalledPathLoader.try_new(path, warn:)
+    sig {
+      params(path: Pathname, config: T.nilable(Config), warn: T::Boolean, api_fallback: T::Boolean)
+        .returns(Cask)
+    }
+    def self.load_from_installed_caskfile(path, config: nil, warn: true, api_fallback: true)
+      loader = FromInstalledPathLoader.try_new(path, warn:, api_fallback:)
       loader ||= NullLoader.new(path)
 
       loader.load(config:)
     end
 
+    sig { params(path: Pathname).returns(String) }
+    def self.token_from_path(path)
+      path.basename(path.extname).basename(".internal").to_s
+    end
+
+    # Legacy `.internal.json` files contain full API data rather than the compact installed JSON format.
+    sig { params(path: Pathname).returns(T::Boolean) }
+    def self.installed_json_caskfile?(path)
+      path.extname == ".json" && !path.basename.to_s.end_with?(".internal.json")
+    end
+
+    sig { params(path: Pathname).returns(T.nilable(T::Hash[String, T.untyped])) }
+    def self.load_installed_json(path)
+      return unless installed_json_caskfile?(path)
+
+      json = JSON.parse(path.read)
+      json if json.is_a?(Hash)
+    rescue JSON::ParserError
+      nil
+    end
+
+    sig { params(cask_or_token: T.any(Cask, String)).returns(Tab) }
+    def self.load_installed_tab(cask_or_token)
+      cask = if cask_or_token.is_a?(Cask)
+        cask_or_token
+      else
+        Cask.new(cask_or_token)
+      end
+      cask.tab
+    rescue JSON::ParserError, NoMethodError, TypeError
+      Tab.empty
+    end
+
+    sig {
+      params(
+        token:        String,
+        artifacts:    T.nilable(T::Array[T::Hash[T.any(String, Symbol), T.anything]]),
+        tap:          T.nilable(Tap),
+        api_fallback: T::Boolean,
+      ).returns(T::Array[T::Hash[T.any(String, Symbol), T.anything]])
+    }
+    def self.resolve_installed_artifacts(token, artifacts, tap: nil, api_fallback: true)
+      artifacts = artifacts.presence
+      return artifacts if artifacts
+      return [] unless api_fallback
+
+      artifacts ||= begin
+        tap_loader = (FromNameLoader.try_new(token, warn: false) if tap.nil? && FromAPILoader.try_new(token).nil?)
+
+        if tap && !tap.core_cask_tap?
+          load("#{tap}/#{token}", warn: false).artifacts_list(uninstall_only: true)
+        elsif tap_loader
+          tap_loader.load(config: nil).artifacts_list(uninstall_only: true)
+        end
+      rescue CaskError, MethodDeprecatedError, JSON::ParserError, ErrorDuringExecution, SystemExit
+        nil
+      end
+
+      # API fetch failures must not abort best-effort installed metadata recovery. Skip the
+      # per-cask endpoint only when the token is definitively absent from the current API;
+      # a membership-check failure is treated as unknown so recovery still tries the endpoint.
+      artifacts ||= begin
+        definitely_absent = begin
+          !Homebrew::API.cask_token?(token)
+        rescue ErrorDuringExecution, SystemExit
+          false
+        end
+        Homebrew::API::Cask.cask_json(token)["artifacts"] unless definitely_absent
+      rescue ErrorDuringExecution, SystemExit
+        nil
+      end
+      artifacts ||= []
+      artifacts
+    end
+
+    sig {
+      params(
+        path:          Pathname,
+        tab:           T.nilable(Tab),
+        fallback_cask: T.nilable(Cask),
+        config:        T.nilable(Config),
+      ).returns(T.nilable(Cask))
+    }
+    def self.recover_from_installed_caskfile(path, tab: nil, fallback_cask: nil, config: nil)
+      # Only installed metadata has the versioned path layout used to rebuild the cask below.
+      return if path.dirname.basename.to_s != "Casks"
+
+      # Read any usable receipt, while retaining the current cask as a fallback for missing receipt data.
+      token = token_from_path(path)
+      tab ||= load_installed_tab(fallback_cask || token)
+
+      # Ruby uninstall flight blocks cannot be represented by installed JSON and must not be approximated.
+      return if tab.uninstall_flight_blocks
+      return if fallback_cask&.uninstall_flight_blocks?
+
+      # Prefer exact receipt artifacts, then the current cask and finally the current source definition.
+      artifacts = tab.uninstall_artifacts.presence
+      artifacts ||= fallback_cask.artifacts_list(uninstall_only: true) if fallback_cask
+      artifacts ||= resolve_installed_artifacts(token, nil, tap: tab.tap)
+
+      # Rebuild the installed version from its metadata directory and retain current source path information.
+      api_source = {
+        "version"   => path.dirname.dirname.dirname.basename.to_s,
+        "artifacts" => artifacts,
+      }
+      api_source["url_specs"] ||= fallback_cask.to_installed_json_hash["url_specs"] if fallback_cask
+
+      # Prefer the installed JSON's source path because it belongs to the installed version.
+      if (source_json = load_installed_json(path))
+        source_url_specs = source_json["url_specs"]
+        api_source["url_specs"] = source_url_specs if source_url_specs.is_a?(Hash)
+      end
+
+      # Load through the installed-JSON path so reconstructed artifacts have normal installed paths and behaviour.
+      recovered_cask = FromAPILoader.new(
+        token,
+        from_json:               api_source,
+        path:,
+        from_installed_caskfile: true,
+      ).load(config:)
+      recovered_cask unless recovered_cask.uninstall_flight_blocks?
+    rescue CaskInvalidError, CaskUnavailableError, MethodDeprecatedError, JSON::ParserError
+      # Recovery is best effort; callers treat nil as an unavailable installed cask and use their existing fallback.
+      nil
+    end
+
+    sig { params(token: T.any(String, Symbol)).returns(Pathname) }
     def self.default_path(token)
       find_cask_in_tap(token.to_s.downcase, CoreCaskTap.instance)
     end
 
+    sig { params(token: String, tap: Tap).returns(Pathname) }
     def self.find_cask_in_tap(token, tap)
       filename = "#{token}.rb"
 

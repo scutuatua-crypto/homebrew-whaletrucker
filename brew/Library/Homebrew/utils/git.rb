@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "system_command"
+require "utils/path"
 
 module Utils
   # Helper functions for querying Git information.
@@ -15,10 +16,21 @@ module Utils
       !version.null?
     end
 
+    sig { returns(T::Hash[String, String]) }
+    def self.no_global_config_env
+      { "GIT_CONFIG_GLOBAL" => no_global_config_file }
+    end
+
+    sig { returns(String) }
+    def self.no_global_config_file
+      File::NULL
+    end
+
     sig { returns(Version) }
     def self.version
       @version ||= T.let(begin
-        stdout, _, status = system_command(git, args: ["--version"], verbose: false, print_stderr: false).to_a
+        stdout, _, status = system_command(git, args: ["--version"], env: no_global_config_env,
+                                                verbose: false, print_stderr: false).to_a
         version_str = status.success? ? stdout.chomp[/git version (\d+(?:\.\d+)*)/, 1] : nil
         version_str.nil? ? Version::NULL : Version.new(version_str)
       end, T.nilable(Version))
@@ -41,7 +53,7 @@ module Utils
     def self.remote_exists?(url)
       return true unless available?
 
-      quiet_system "git", "ls-remote", url
+      quiet_system "git", "ls-remote", "--end-of-options", url
     end
 
     sig { void }
@@ -110,6 +122,18 @@ module Utils
       Utils.popen_read(git, "-C", repo, "show", "#{commit}:#{relative_file}")
     end
 
+    # The paths (relative to `repository`'s root) changed in its working tree
+    # since it diverged from the upstream default branch. The base is the
+    # `origin/HEAD` merge-base rather than the local default branch ref, which
+    # is often stale (e.g. in worktrees and freshly-cloned taps); it falls back
+    # to `main` when `origin/HEAD` is unavailable.
+    sig { params(repository: T.any(Pathname, String)).returns(T::Array[String]) }
+    def self.changed_files(repository)
+      base_ref = Utils.popen_read(git, "-C", repository, "merge-base", "origin/HEAD", "HEAD").chomp.presence
+      base_ref ||= "main"
+      Utils.popen_read(git, "-C", repository, "diff", "--name-only", "--no-relative", base_ref).split("\n")
+    end
+
     sig { void }
     def self.ensure_installed!
       return if available?
@@ -122,7 +146,7 @@ module Utils
           raise "Refusing to install Git on a generic OS." if ENV["HOMEBREW_TEST_GENERIC_OS"]
 
           require "formula"
-          Formula["git"].ensure_installed!
+          Formula["git"].ensure_installed!(executable: "git")
           clear_available_cache
         rescue
           raise "Git is unavailable"
@@ -156,7 +180,7 @@ module Utils
 
     sig { void }
     def self.setup_gpg!
-      gnupg_bin = HOMEBREW_PREFIX/"opt/gnupg/bin"
+      gnupg_bin = Utils::Path.formula_opt_bin("gnupg")
       return unless gnupg_bin.directory?
 
       ENV["PATH"] = PATH.new(ENV.fetch("PATH")).prepend(gnupg_bin).to_s
@@ -182,21 +206,6 @@ module Utils
       # There is some support for partial clones prior to 2.20, but we avoid using it
       # due to performance issues
       version >= Version.new("2.20.0")
-    end
-
-    sig {
-      params(repository_path: T.nilable(Pathname), person: String, from: T.nilable(String),
-             to: T.nilable(String)).returns(Integer)
-    }
-    def self.count_coauthors(repository_path, person, from:, to:)
-      return 0 if repository_path.blank?
-
-      cmd = [git.to_s, "-C", repository_path.to_s, "log", "--oneline"]
-      cmd << "--format='%(trailers:key=Co-authored-by:)''"
-      cmd << "--before=#{to}" if to
-      cmd << "--after=#{from}" if from
-
-      Utils.safe_popen_read(*cmd).lines.count { |l| l.include?(person) }
     end
   end
 end

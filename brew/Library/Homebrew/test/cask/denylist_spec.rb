@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "cask/denylist"
@@ -11,14 +12,14 @@ RSpec.describe Cask::Denylist, :cask do
     end
 
     specify(:aggregate_failures) do
-      expect(subject).not_to disallow("adobe-air") # rubocop:todo RSpec/NamedSubject
-      expect(subject).to disallow("adobe-after-effects") # rubocop:todo RSpec/NamedSubject
-      expect(subject).to disallow("adobe-illustrator") # rubocop:todo RSpec/NamedSubject
-      expect(subject).to disallow("adobe-indesign") # rubocop:todo RSpec/NamedSubject
-      expect(subject).to disallow("adobe-photoshop") # rubocop:todo RSpec/NamedSubject
-      expect(subject).to disallow("adobe-premiere") # rubocop:todo RSpec/NamedSubject
-      expect(subject).to disallow("pharo") # rubocop:todo RSpec/NamedSubject
-      expect(subject).not_to disallow("allowed-cask") # rubocop:todo RSpec/NamedSubject
+      expect(described_class).not_to disallow("adobe-air")
+      expect(described_class).to disallow("adobe-after-effects")
+      expect(described_class).to disallow("adobe-illustrator")
+      expect(described_class).to disallow("adobe-indesign")
+      expect(described_class).to disallow("adobe-photoshop")
+      expect(described_class).to disallow("adobe-premiere")
+      expect(described_class).to disallow("pharo")
+      expect(described_class).not_to disallow("allowed-cask")
     end
   end
 end

@@ -1,8 +1,14 @@
+# typed: true
 # frozen_string_literal: true
 
 require "utils/git_repository"
 
 RSpec.describe Utils do
+  let(:commit_message) { "File added" }
+  let(:branch_name) { "test-branch" }
+  let(:head_revision) { HOMEBREW_CACHE.cd { `git rev-parse HEAD`.chomp } }
+  let(:short_head_revision) { HOMEBREW_CACHE.cd { `git rev-parse --short HEAD`.chomp } }
+
   shared_examples "git_repository helper function" do |method_name|
     context "when directory is not a Git repository" do
       it "returns nil if `safe` parameter is `false`" do
@@ -41,12 +47,6 @@ RSpec.describe Utils do
     end
   end
 
-  let(:commit_message) { "File added" }
-  let(:branch_name) { "test-branch" }
-
-  let(:head_revision) { HOMEBREW_CACHE.cd { `git rev-parse HEAD`.chomp } }
-  let(:short_head_revision) { HOMEBREW_CACHE.cd { `git rev-parse --short HEAD`.chomp } }
-
   describe "::git_head" do
     it "returns the revision at HEAD" do
       expect(described_class.git_head(HOMEBREW_CACHE)).to eq(head_revision)
@@ -80,19 +80,6 @@ RSpec.describe Utils do
       expect(described_class.git_branch(HOMEBREW_CACHE)).to eq(branch_name)
       HOMEBREW_CACHE.cd do
         expect(described_class.git_branch).to eq(branch_name)
-      end
-    end
-  end
-
-  describe "::git_commit_message" do
-    include_examples "git_repository helper function", :git_commit_message
-
-    it "returns the commit message of HEAD" do
-      expect(described_class.git_commit_message(HOMEBREW_CACHE)).to eq(commit_message)
-      expect(described_class.git_commit_message(HOMEBREW_CACHE, commit: head_revision)).to eq(commit_message)
-      HOMEBREW_CACHE.cd do
-        expect(described_class.git_commit_message).to eq(commit_message)
-        expect(described_class.git_commit_message(commit: head_revision)).to eq(commit_message)
       end
     end
   end

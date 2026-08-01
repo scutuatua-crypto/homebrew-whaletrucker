@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "download_strategy"
@@ -25,6 +26,14 @@ RSpec.describe DownloadStrategyDetector do
       let(:url) { "https://github.com/homebrew/brew.git" }
 
       it { is_expected.to eq(GitHubGitDownloadStrategy) }
+    end
+
+    context "when given a PyPI URL" do
+      let(:url) do
+        "https://files.pythonhosted.org/packages/ab/cd/efg/example-package-1.2.3.tar.gz"
+      end
+
+      it { is_expected.to eq(PyPIDownloadStrategy) }
     end
 
     it "defaults to curl" do

@@ -74,10 +74,16 @@ module Homebrew
             if args.suggest_typed?
               ohai "Checking if we can bump Sorbet `typed` sigils..."
               # --sorbet needed because of https://github.com/Shopify/spoom/issues/488
+              #
+              # Use the native sorbet binary directly to avoid Ruby version conflicts.
+              # spoom's exec uses Bundler.with_unbundled_env which can cause `#!/usr/bin/env ruby`
+              # scripts to use the wrong Ruby version (e.g., system Ruby 2.6 on macOS).
+              sorbet_path = Gem::Specification.find_by_name("sorbet-static").full_gem_path
+              sorbet_bin = File.join(sorbet_path, "libexec", "sorbet")
               system "bundle", "exec", "spoom", "srb", "bump", "--from", "false", "--to", "true",
-                     "--sorbet", "#{Gem.bin_path("sorbet", "srb")} tc"
+                     "--sorbet", sorbet_bin
               system "bundle", "exec", "spoom", "srb", "bump", "--from", "true", "--to", "strict",
-                     "--sorbet", "#{Gem.bin_path("sorbet", "srb")} tc"
+                     "--sorbet", sorbet_bin
             end
 
             return
@@ -104,11 +110,25 @@ module Homebrew
           end
 
           srb_exec += ["--ignore", args.ignore] if args.ignore.present?
-          if args.file.present? || args.dir.present? || (tap_dir = args.named.to_paths(only: :tap).first).present?
+          if args.file.present? || args.dir.present? || (tap_dirs = args.named.to_paths(only: :tap)).present?
             cd("sorbet") do
-              srb_exec += ["--file", "../#{args.file}"] if args.file
-              srb_exec += ["--dir", "../#{args.dir}"] if args.dir
-              srb_exec += ["--dir", tap_dir.to_s] if tap_dir
+              path = if (file = args.file.presence)
+                srb_exec << "--file"
+                Pathname(file)
+              elsif (dir = args.dir.presence)
+                srb_exec << "--dir"
+                Pathname(dir)
+              end
+              if path
+                srb_exec << if path.absolute?
+                  path.to_path
+                else
+                  "../#{path}"
+                end
+              end
+              tap_dirs&.each do |tap_dir|
+                srb_exec += ["--dir", tap_dir.to_s]
+              end
             end
           end
           success = system(*srb_exec)
@@ -132,6 +152,7 @@ module Homebrew
         return unless parsed.success?
 
         allowlist = %w[
+          CopHelper
           Parser::Source
           RuboCop::AST::Node
           RuboCop::AST::NodePattern
@@ -166,6 +187,7 @@ module Homebrew
           RuboCop::Formatter::PathUtil
           RuboCop::Options
           RuboCop::ResultCache
+          RuboCop::RSpec::ExpectOffense
           RuboCop::Runner
           RuboCop::TargetFinder
           RuboCop::Version

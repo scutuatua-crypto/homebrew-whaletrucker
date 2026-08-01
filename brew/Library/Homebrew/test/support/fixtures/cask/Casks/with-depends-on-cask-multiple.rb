@@ -1,3 +1,5 @@
+# typed: false
+
 cask "with-depends-on-cask-multiple" do
   version "1.2.3"
   sha256 "67cdb8a02803ef37fdbf7e0be205863172e41a561ca446cd84f0d7ab35a99d94"
@@ -7,6 +9,7 @@ cask "with-depends-on-cask-multiple" do
 
   depends_on cask: "local-caffeine"
   depends_on cask: "local-transmission-zip"
+  depends_on macos: :catalina
 
   app "Caffeine.app"
 end

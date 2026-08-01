@@ -1,27 +1,31 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "macho"
-
 # {Pathname} extension for dealing with Mach-O files.
 module MachOShim
-  extend Forwardable
   extend T::Helpers
 
   requires_ancestor { Pathname }
 
-  delegate [:dylib_id] => :macho
+  MachOFile = T.type_alias { T.any(MachO::MachOFile, MachO::FatFile) }
+  private_constant :MachOFile
 
   sig { params(args: T.untyped).void }
   def initialize(*args)
-    @macho = T.let(nil, T.nilable(T.any(MachO::MachOFile, MachO::FatFile)))
+    require "macho"
+
+    @macho = T.let(nil, T.nilable(MachOFile))
     @mach_data = T.let(nil, T.nilable(T::Array[T::Hash[Symbol, Symbol]]))
 
     super
   end
 
-  sig { returns(T.any(MachO::MachOFile, MachO::FatFile)) }
+  sig { returns(T.nilable(String)) }
+  def dylib_id = macho.dylib_id
+
+  sig { returns(MachOFile) }
   def macho
+    require "macho"
     @macho ||= MachO.open(to_s)
   end
   private :macho
@@ -69,9 +73,8 @@ module MachOShim
   end
   private :mach_data
 
-  # TODO: See if the `#write!` call can be delayed until
-  #       we know we're not making any changes to the rpaths.
-  sig { params(rpath: String, strict: T::Boolean).void }
+  # Returns the deleted rpath, or nil when there's nothing to delete.
+  sig { params(rpath: String, strict: T::Boolean).returns(T.nilable(String)) }
   def delete_rpath(rpath, strict: true)
     candidates = rpaths(resolve_variable_references: false).select do |r|
       resolve_variable_name(r) == resolve_variable_name(rpath)
@@ -79,9 +82,12 @@ module MachOShim
 
     # Delete the last instance to avoid changing the order in which rpaths are searched.
     rpath_to_delete = candidates.last
+    # Avoid writing the whole binary back to disk when there's nothing to delete.
+    return if rpath_to_delete.nil?
 
     macho.delete_rpath(rpath_to_delete, { last: true, strict: })
     macho.write!
+    rpath_to_delete
   end
 
   sig { params(old: String, new: String, uniq: T::Boolean, last: T::Boolean, strict: T::Boolean).void }

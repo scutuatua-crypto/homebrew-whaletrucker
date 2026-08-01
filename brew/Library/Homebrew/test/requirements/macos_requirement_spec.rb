@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "requirements/macos_requirement"
@@ -62,5 +63,19 @@ RSpec.describe MacOSRequirement do
     expect(min_requirement.allows?(tahoe_major)).to be true
     expect(exact_requirement.allows?(tahoe_major)).to be true
     expect(range_requirement.allows?(tahoe_major)).to be true
+  end
+
+  specify "#message reflects the dependent type" do
+    min_requirement = described_class.new([:tahoe], comparator: ">=")
+    max_requirement = described_class.new([:monterey], comparator: "<=")
+    no_requirement = described_class.new
+    expect(min_requirement.message)
+      .to eq "This formula does not run on macOS versions older than Tahoe."
+    expect(min_requirement.message(type: :cask))
+      .to eq "This cask does not run on macOS versions older than Tahoe."
+    expect(max_requirement.message(type: :cask))
+      .to eq "This cask does not run on macOS versions newer than Monterey."
+    expect(no_requirement.message).to eq "This formula requires macOS."
+    expect(no_requirement.message(type: :cask)).to eq "This cask requires macOS."
   end
 end

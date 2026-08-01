@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "locale"
@@ -47,15 +48,15 @@ RSpec.describe Locale do
   end
 
   describe "#include?" do
-    subject { described_class.new("zh", "Hans", "CN") }
+    subject(:locale) { described_class.new("zh", "Hans", "CN") }
 
     specify(:aggregate_failures) do
-      expect(subject).to include("zh") # rubocop:todo RSpec/NamedSubject
-      expect(subject).to include("zh-CN") # rubocop:todo RSpec/NamedSubject
-      expect(subject).to include("CN") # rubocop:todo RSpec/NamedSubject
-      expect(subject).to include("Hans-CN") # rubocop:todo RSpec/NamedSubject
-      expect(subject).to include("Hans") # rubocop:todo RSpec/NamedSubject
-      expect(subject).to include("zh-Hans-CN") # rubocop:todo RSpec/NamedSubject
+      expect(locale).to include("zh")
+      expect(locale).to include("zh-CN")
+      expect(locale).to include("CN")
+      expect(locale).to include("Hans-CN")
+      expect(locale).to include("Hans")
+      expect(locale).to include("zh-Hans-CN")
     end
   end
 
@@ -64,18 +65,18 @@ RSpec.describe Locale do
 
     context "when all parts match" do
       specify(:aggregate_failures) do
-        expect(subject).to eql("zh-Hans-CN") # rubocop:todo RSpec/NamedSubject
-        expect(subject).to eql(locale) # rubocop:todo RSpec/NamedSubject
+        expect(locale).to eql("zh-Hans-CN")
+        expect(locale).to eql(described_class.new("zh", "Hans", "CN"))
       end
     end
 
     context "when only some parts match" do
       specify(:aggregate_failures) do
-        expect(subject).not_to eql("zh") # rubocop:todo RSpec/NamedSubject
-        expect(subject).not_to eql("zh-CN") # rubocop:todo RSpec/NamedSubject
-        expect(subject).not_to eql("CN") # rubocop:todo RSpec/NamedSubject
-        expect(subject).not_to eql("Hans-CN") # rubocop:todo RSpec/NamedSubject
-        expect(subject).not_to eql("Hans") # rubocop:todo RSpec/NamedSubject
+        expect(locale).not_to eql("zh")
+        expect(locale).not_to eql("zh-CN")
+        expect(locale).not_to eql("CN")
+        expect(locale).not_to eql("Hans-CN")
+        expect(locale).not_to eql("Hans")
       end
     end
 

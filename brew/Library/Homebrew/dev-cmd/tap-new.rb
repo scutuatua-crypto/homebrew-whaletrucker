@@ -2,8 +2,8 @@
 # frozen_string_literal: true
 
 require "abstract_command"
-require "erb"
 require "fileutils"
+require "system_command"
 require "tap"
 require "utils/uid"
 
@@ -11,6 +11,7 @@ module Homebrew
   module DevCmd
     class TapNew < AbstractCommand
       include FileUtils
+      include SystemCommand::Mixin
 
       cmd_args do
         usage_banner "`tap-new` [<options>] <user>`/`<repo>"
@@ -18,11 +19,12 @@ module Homebrew
           Generate the template files for a new tap.
         EOS
         switch "--no-git",
-               description: "Don't initialize a Git repository for the tap."
+               description: "Don't initialise a Git repository for the tap."
         flag   "--pull-label=",
-               description: "Label name for pull requests ready to be pulled (default: `pr-pull`)."
+               description: "Ignored; publishing pull requests is now manually dispatched.",
+               odeprecated: true
         flag   "--branch=",
-               description: "Initialize Git repository and setup GitHub Actions workflows with the " \
+               description: "Initialise a Git repository and set up GitHub Actions workflows with the " \
                             "specified branch name (default: `main`)."
         switch "--github-packages",
                description: "Upload bottles to GitHub Packages."
@@ -32,7 +34,6 @@ module Homebrew
 
       sig { override.void }
       def run
-        label = args.pull_label || "pr-pull"
         branch = args.branch || "main"
 
         tap = args.named.to_taps.fetch(0)
@@ -70,129 +71,29 @@ module Homebrew
         MARKDOWN
         write_path(tap, "README.md", readme)
 
-        tests_yml = <<~ERB
-          name: brew test-bot
+        dependabot_yml = <<~YAML
+          version: 2
+          updates:
+            - package-ecosystem: github-actions
+              directory: "/"
+              schedule:
+                interval: weekly
+              groups:
+                github-actions:
+                  patterns:
+                    - "*"
+        YAML
 
-          on:
-            push:
-              branches:
-                - <%= branch %>
-            pull_request:
-
-          jobs:
-            test-bot:
-              strategy:
-                matrix:
-                  os: [ ubuntu-22.04, macos-15-intel, macos-26 ]
-              runs-on: ${{ matrix.os }}
-              permissions:
-                actions: read
-                checks: read
-                contents: read
-          <% if args.github_packages? -%>
-                packages: read
-          <% end -%>
-                pull-requests: read
-              steps:
-                - name: Set up Homebrew
-                  id: set-up-homebrew
-                  uses: Homebrew/actions/setup-homebrew@main
-                  with:
-                    token: ${{ secrets.GITHUB_TOKEN }}
-
-                - name: Cache Homebrew Bundler RubyGems
-                  uses: actions/cache@v4
-                  with:
-                    path: ${{ steps.set-up-homebrew.outputs.gems-path }}
-                    key: ${{ matrix.os }}-rubygems-${{ steps.set-up-homebrew.outputs.gems-hash }}
-                    restore-keys: ${{ matrix.os }}-rubygems-
-
-                - run: brew test-bot --only-cleanup-before
-
-                - run: brew test-bot --only-setup
-
-                - run: brew test-bot --only-tap-syntax
-          <% if args.github_packages? -%>
-                - name: Base64-encode GITHUB_TOKEN for HOMEBREW_DOCKER_REGISTRY_TOKEN
-                  id: base64-encode
-                  if: github.event_name == 'pull_request'
-                  env:
-                    TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  run: |
-                    base64_token=$(echo -n "${TOKEN}" | base64 | tr -d "\\n")
-                    echo "::add-mask::${base64_token}"
-                    echo "token=${base64_token}" >> "${GITHUB_OUTPUT}"
-          <% end -%>
-                - run: brew test-bot --only-formulae#{" --root-url=#{root_url}" if root_url}
-                  if: github.event_name == 'pull_request'
-          <% if args.github_packages? -%>
-                  env:
-                    HOMEBREW_DOCKER_REGISTRY_TOKEN: ${{ steps.base64-encode.outputs.token }}
-          <% end -%>
-
-                - name: Upload bottles as artifact
-                  if: always() && github.event_name == 'pull_request'
-                  uses: actions/upload-artifact@v4
-                  with:
-                    name: bottles_${{ matrix.os }}
-                    path: '*.bottle.*'
-        ERB
-
-        publish_yml = <<~ERB
-          name: brew pr-pull
-
-          on:
-            pull_request_target:
-              types:
-                - labeled
-
-          jobs:
-            pr-pull:
-              if: contains(github.event.pull_request.labels.*.name, '<%= label %>')
-              runs-on: ubuntu-22.04
-              permissions:
-                actions: read
-                checks: read
-                contents: write
-                issues: read
-          <% if args.github_packages? -%>
-                packages: write
-          <% end -%>
-                pull-requests: write
-              steps:
-                - name: Set up Homebrew
-                  uses: Homebrew/actions/setup-homebrew@main
-                  with:
-                    token: ${{ secrets.GITHUB_TOKEN }}
-
-                - name: Set up git
-                  uses: Homebrew/actions/git-user-config@main
-
-                - name: Pull bottles
-                  env:
-                    HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          <% if args.github_packages? -%>
-                    HOMEBREW_GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                    HOMEBREW_GITHUB_PACKAGES_USER: ${{ github.repository_owner }}
-          <% end -%>
-                    PULL_REQUEST: ${{ github.event.pull_request.number }}
-                  run: brew pr-pull --debug --tap="$GITHUB_REPOSITORY" "$PULL_REQUEST"
-
-                - name: Push commits
-                  uses: Homebrew/actions/git-try-push@main
-                  with:
-                    branch: <%= branch %>
-
-                - name: Delete branch
-                  if: github.event.pull_request.head.repo.fork == false
-                  env:
-                    BRANCH: ${{ github.event.pull_request.head.ref }}
-                  run: git push --delete origin "$BRANCH"
-        ERB
-
+        tests_yml = render_workflow_template(
+          "tap-new-tests.yml", branch:, github_packages: args.github_packages?, root_url:
+        )
+        publish_yml = render_workflow_template(
+          "tap-new-publish.yml", branch:, github_packages: args.github_packages?
+        )
         (tap.path/".github/workflows").mkpath
-        write_path(tap, ".github/workflows/tests.yml", ERB.new(tests_yml, trim_mode: "-").result(binding))
-        write_path(tap, ".github/workflows/publish.yml", ERB.new(publish_yml, trim_mode: "-").result(binding))
+        write_path(tap, ".github/dependabot.yml", dependabot_yml)
+        write_path(tap, ".github/workflows/tests.yml", tests_yml)
+        write_path(tap, ".github/workflows/publish.yml", publish_yml)
 
         unless args.no_git?
           cd tap.path do |path|
@@ -212,15 +113,14 @@ module Homebrew
             end
 
             # Use the configuration of the original user, which will have author information and signing keys.
-            Utils::UID.drop_euid do
-              env = { HOME: Utils::UID.uid_home }.compact
-              env[:TMPDIR] = nil if (tmpdir = ENV.fetch("TMPDIR", nil)) && !File.writable?(tmpdir)
-              with_env(env) do
-                safe_system "git", *args, "add", "--all"
-                safe_system "git", *args, "commit", "-m", "Create #{tap} tap"
-                safe_system "git", *args, "branch", "-m", branch
-              end
-            end
+            env = { "HOME" => Utils::UID.uid_home }.compact
+            env["TMPDIR"] = nil if (tmpdir = ENV.fetch("TMPDIR", nil)) && !File.writable_real?(tmpdir)
+            system_command!("git", args: [*args, "add", "--all"], env:,
+                            print_stdout: true, run_as_real_uid: true)
+            system_command!("git", args: [*args, "commit", "-m", "Create #{tap} tap"], env:,
+                            print_stdout: true, run_as_real_uid: true)
+            system_command!("git", args: [*args, "branch", "-m", branch], env:,
+                            print_stdout: true, run_as_real_uid: true)
           end
         end
 
@@ -230,11 +130,47 @@ module Homebrew
 
           When a pull request making changes to a formula (or formulae) becomes green
           (all checks passed), then you can publish the built bottles.
-          To do so, label your PR as `#{label}` and the workflow will be triggered.
+          To do so, run `brew pr-pull` locally or run the `brew pr-pull`
+          workflow with the pull request number and, optionally, the pull
+          request's expected head commit SHA.
         EOS
       end
 
       private
+
+      sig {
+        params(
+          filename:        String,
+          branch:          String,
+          github_packages: T::Boolean,
+          root_url:        T.nilable(String),
+        ).returns(String)
+      }
+      def render_workflow_template(filename, branch:, github_packages:, root_url: nil)
+        workflow = (HOMEBREW_LIBRARY_PATH.parent.parent/".github/workflows"/filename).read
+        workflow.sub!("name: tap-new tests template", "name: brew test-bot")
+        workflow.sub!("name: tap-new publish template", "name: brew pr-pull")
+        if filename == "tap-new-tests.yml"
+          workflow.sub!("on:\n  workflow_dispatch:\n", <<~YAML)
+            on:
+              push:
+                branches:
+                  - #{branch}
+              pull_request:
+          YAML
+        end
+        workflow.sub!("    if: github.repository == ''\n", "")
+        workflow.gsub!("TAP_NEW_BRANCH") { branch }
+        workflow.gsub!("TAP_NEW_ROOT_URL_ARGUMENT") { root_url ? " --root-url=#{root_url}" : "" }
+        unless github_packages
+          workflow.gsub!(
+            /^[ \t]*# tap-new-github-packages-start\n.*?^[ \t]*# tap-new-github-packages-end\n/m,
+            "",
+          )
+        end
+        workflow.gsub!(/^[ \t]*# tap-new-github-packages-(?:start|end)\n/, "")
+        workflow
+      end
 
       sig { params(tap: Tap, filename: T.any(String, Pathname), content: String).void }
       def write_path(tap, filename, content)

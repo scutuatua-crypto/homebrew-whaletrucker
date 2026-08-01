@@ -40,7 +40,11 @@ module Homebrew
     def self.load!(compile_cache: true)
       return unless enabled?
 
-      require ENV.fetch("HOMEBREW_BOOTSNAP_GEM_PATH")
+      begin
+        require ENV.fetch("HOMEBREW_BOOTSNAP_GEM_PATH")
+      rescue LoadError
+        return
+      end
 
       ::Bootsnap.setup(
         cache_dir:,
@@ -50,7 +54,8 @@ module Homebrew
         # https://github.com/Shopify/bootsnap?tab=readme-ov-file#precompilation
         development_mode:   true,
         load_path_cache:    true,
-        compile_cache_iseq: compile_cache,
+        # Ruby refuses InstructionSequence#to_binary while Coverage is active.
+        compile_cache_iseq: compile_cache && ENV["HOMEBREW_TESTS_COVERAGE"].nil?,
         compile_cache_yaml: compile_cache,
       )
     end
@@ -63,6 +68,25 @@ module Homebrew
 
       # The compile cache doesn't get unloaded so we don't need to load it again!
       load!(compile_cache: false)
+    end
+
+    # Compile caches for the load graphs of common commands in a detached
+    # background process, so the next `brew` command doesn't pay the cost of
+    # compiling caches for Ruby files changed by e.g. `brew update`.
+    def self.prewarm!
+      return unless enabled?
+      return if ENV["HOMEBREW_TESTS"]
+
+      pid = Process.spawn(
+        *HOMEBREW_RUBY_EXEC_ARGS,
+        "-I", $LOAD_PATH.join(File::PATH_SEPARATOR),
+        "-rglobal", "-rcmd/install", "-rcmd/fetch", "-rcmd/upgrade",
+        "-e", "",
+        in: File::NULL, out: File::NULL, err: File::NULL, pgroup: true
+      )
+      Process.detach(pid)
+    rescue SystemCallError
+      nil
     end
   end
 end

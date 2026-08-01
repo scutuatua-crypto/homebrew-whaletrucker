@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "utils/cpan"
@@ -19,25 +20,16 @@ RSpec.describe CPAN do
     let(:package_from_non_cpan_url) { described_class.new("SomePackage", non_cpan_package_url) }
 
     describe "initialize" do
-      it "initializes resource name" do
+      specify do
         expect(package_from_cpan_url.name).to eq "Scalar::Util"
-      end
-
-      it "extracts version from CPAN url" do # rubocop:todo RSpec/AggregateExamples
         expect(package_from_cpan_url.current_version).to eq "1.68"
-      end
-
-      it "handles .tgz extensions" do # rubocop:todo RSpec/AggregateExamples
         expect(package_from_tgz_url.current_version).to eq "1.23"
       end
     end
 
     describe ".valid_cpan_package?" do
-      it "is true for CPAN URLs" do
+      specify do
         expect(package_from_cpan_url.valid_cpan_package?).to be true
-      end
-
-      it "is false for non-CPAN URLs" do # rubocop:todo RSpec/AggregateExamples
         expect(package_from_non_cpan_url.valid_cpan_package?).to be false
       end
     end

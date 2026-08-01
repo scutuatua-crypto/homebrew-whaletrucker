@@ -13,6 +13,8 @@ module OS
     raise "Loaded OS::Linux on macOS!" if OS.mac?
     # rubocop:enable Homebrew/MoveToExtendOS
 
+    extend Utils::Output::Mixin
+
     @languages = T.let([], T::Array[String])
 
     # Get the OS version.
@@ -22,7 +24,10 @@ module OS
     def self.os_version
       if which("lsb_release")
         lsb_info = Utils.popen_read("lsb_release", "-a")
-        description = lsb_info[/^Description:\s*(.*)$/, 1].force_encoding("UTF-8")
+        description = lsb_info[/^Description:\s*(.*)$/, 1]&.force_encoding("UTF-8")
+
+        odie "Failed to parse lsb_release output: #{lsb_info.inspect}" unless description
+
         codename = lsb_info[/^Codename:\s*(.*)$/, 1]
         if codename.blank? || (codename == "n/a")
           description
@@ -38,7 +43,16 @@ module OS
 
     sig { returns(T::Boolean) }
     def self.wsl?
-      /-microsoft/i.match?(OS.kernel_version.to_s)
+      OS.wsl?
+    end
+
+    sig { returns(T::Boolean) }
+    def self.inside_docker?
+      return true if File.file?("/.dockerenv")
+      return true if File.file?("/run/.containerenv")
+      return false unless File.file?("/proc/1/cgroup")
+
+      File.read("/proc/1/cgroup").match?(/azpl_job|actions_job|docker|garden|kubepods/)
     end
 
     sig { returns(Version) }
@@ -63,8 +77,9 @@ module OS
 
       locale_variables = ENV.keys.grep(/^(?:LC_\S+|LANG|LANGUAGE)\Z/).sort
       ctl_ret = Utils.popen_read("localectl", "list-locales")
+      list = T.let([], T::Array[String])
       if ctl_ret.present?
-        list = ctl_ret.scan(/[^ \n"(),]+/)
+        list = T.cast(ctl_ret.scan(/[^ \n"(),]+/), T::Array[String])
       elsif locale_variables.present?
         keys = locale_variables.select { |var| ENV.fetch(var) }
         list = keys.map { |key| ENV.fetch(key) }
@@ -72,7 +87,7 @@ module OS
         list = ["en_US.utf8"]
       end
 
-      @languages = list.map { |item| item.split(".").first.tr("_", "-") }
+      @languages = list.map { |item| item.split(".").fetch(0).tr("_", "-") }
     end
 
     sig { returns(T.nilable(String)) }

@@ -2,39 +2,25 @@
 # frozen_string_literal: true
 
 require "keg"
-require "language/python"
 require "formula"
 require "formulary"
+require "utils"
 require "version"
 require "development_tools"
 require "utils/shell"
 require "utils/output"
-require "system_config"
 require "cask/caskroom"
 require "cask/quarantine"
+require "diagnostic/finding"
+require "git_repository"
+require "missing"
 require "system_command"
+require "trust"
 
 module Homebrew
   # Module containing diagnostic checks.
   module Diagnostic
     extend Utils::Output::Mixin
-
-    sig {
-      params(formulae: T::Array[Formula], hide: T::Array[String], _block: T.nilable(
-        T.proc.params(formula_name: String, missing_dependencies: T::Array[Dependency]).void,
-      )).returns(T::Hash[String, T::Array[String]])
-    }
-    def self.missing_deps(formulae, hide = [], &_block)
-      missing = {}
-      formulae.each do |f|
-        missing_dependencies = f.missing_dependencies(hide: hide)
-        next if missing_dependencies.empty?
-
-        yield f.full_name, missing_dependencies if block_given?
-        missing[f.full_name] = missing_dependencies
-      end
-      missing
-    end
 
     sig { params(type: Symbol, fatal: T::Boolean).void }
     def self.checks(type, fatal: true)
@@ -46,9 +32,9 @@ module Homebrew
 
         if fatal
           failed ||= true
-          ofail out
+          ofail out.to_s
         else
-          opoo out
+          opoo out.to_s
         end
       end
       exit 1 if failed && fatal
@@ -137,85 +123,100 @@ module Homebrew
       end
 
       sig { returns(T::Array[String]) }
+      def preinstall_checks
+        %w[
+          check_untrusted_taps
+        ].freeze
+      end
+
+      sig { returns(T::Array[String]) }
       def build_error_checks
         supported_configuration_checks + build_from_source_checks
       end
 
-      sig { params(tier: T.any(Integer, String, Symbol)).returns(T.nilable(String)) }
-      def support_tier_message(tier:)
-        return if tier.to_s == "1"
-
-        tier_title, tier_slug, tier_issues = if tier.to_s == "unsupported"
-          ["Unsupported", "unsupported", "Do not report any"]
-        else
-          ["Tier #{tier}", "tier-#{tier.to_s.downcase}", "You can report Tier #{tier} unrelated"]
-        end
-
-        <<~EOS
-          This is a #{tier_title} configuration:
-            #{Formatter.url("https://docs.brew.sh/Support-Tiers##{tier_slug}")}
-          #{Formatter.bold("#{tier_issues} issues to Homebrew/* repositories!")}
-          Read the above document before opening any issues or PRs.
-        EOS
-      end
-
-      sig { params(repository_path: GitRepository, desired_origin: String).returns(T.nilable(String)) }
+      sig { params(repository_path: GitRepository, desired_origin: String).returns(T.nilable(Finding)) }
       def examine_git_origin(repository_path, desired_origin)
         return if !Utils::Git.available? || !repository_path.git_repository?
 
         current_origin = repository_path.origin_url
 
         if current_origin.nil?
-          <<~EOS
-            Missing #{desired_origin} git origin remote.
+          Finding.new(
+            <<~EOS,
+              Missing #{desired_origin} git origin remote.
 
-            Without a correctly configured origin, Homebrew won't update
-            properly. You can solve this by adding the remote:
-              git -C "#{repository_path}" remote add origin #{Formatter.url(desired_origin)}
-          EOS
+              Without a correctly configured origin, Homebrew won't update properly.
+            EOS
+            remediation: Finding::Remediation.new(
+              text:     <<~EOS,
+                You can solve this by adding the remote:
+                  git -C "#{repository_path}" remote add origin #{Formatter.url(desired_origin)}
+              EOS
+              commands: [
+                "git -C \"#{repository_path}\" remote add origin #{desired_origin}",
+              ],
+            ),
+          )
         elsif !current_origin.match?(%r{#{desired_origin}(\.git|/)?$}i)
-          <<~EOS
-            Suspicious #{desired_origin} git origin remote found.
-            The current git origin is:
-              #{current_origin}
+          Finding.new(
+            <<~EOS,
+              The current git origin is:
+                #{current_origin}
 
-            With a non-standard origin, Homebrew won't update properly.
-            You can solve this by setting the origin remote:
-              git -C "#{repository_path}" remote set-url origin #{Formatter.url(desired_origin)}
-          EOS
+              With a non-standard origin, Homebrew won't update properly.
+            EOS
+            remediation: Finding::Remediation.new(
+              text:     <<~EOS,
+                You can solve this by setting the origin remote:
+                  git -C "#{repository_path}" remote set-url origin #{Formatter.url(desired_origin)}
+              EOS
+              commands: [
+                "git -C \"#{repository_path}\" remote set-url origin #{desired_origin}",
+              ],
+            ),
+          )
         end
       end
 
-      sig { params(tap: Tap).returns(T.nilable(String)) }
+      sig { params(tap: Tap).returns(T.nilable(Finding)) }
       def broken_tap(tap)
         return unless Utils::Git.available?
 
         repo = GitRepository.new(HOMEBREW_REPOSITORY)
         return unless repo.git_repository?
 
-        message = <<~EOS
-          #{tap.full_name} was not tapped properly! Run:
-            rm -rf "#{tap.path}"
-            brew tap #{tap.name}
-        EOS
+        finding = Finding.new(
+          "#{tap.full_name} was not tapped properly!",
+          remediation: Finding::Remediation.new(
+            text:     <<~EOS,
+              You can solve this by tapping again:
+                rm -rf "#{tap.path}"
+                brew tap #{tap.name}
+            EOS
+            commands: [
+              "rm -rf \"#{tap.path}\"",
+              "brew tap #{tap.name}",
+            ],
+          ),
+        )
 
-        return message if tap.remote.blank?
+        return finding if tap.remote.blank?
 
         tap_head = tap.git_head
-        return message if tap_head.blank?
+        return finding if tap_head.blank?
         return if tap_head != repo.head_ref
 
-        message
+        finding
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_installed_developer_tools
         return if DevelopmentTools.installed?
 
-        <<~EOS
-          No developer tools installed.
-          #{DevelopmentTools.installation_instructions}
-        EOS
+        Finding.new(
+          "No developer tools installed.\n",
+          remediation: DevelopmentTools.installation_instructions,
+        )
       end
 
       sig { params(dir: String, pattern: String, allow_list: T::Array[String], message: String).returns(T.nilable(String)) }
@@ -236,7 +237,7 @@ module Homebrew
         inject_file_list(files, message)
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_stray_dylibs
         # Dylibs which are generally OK should be added to this list,
         # with a short description of the software they come with.
@@ -244,6 +245,7 @@ module Homebrew
           "libfuse.2.dylib", # MacFuse
           "libfuse3.*.dylib", # MacFuse
           "libfuse_ino64.2.dylib", # MacFuse
+          "libfuse-t*.dylib", # FUSE-T
           "libmacfuse_i32.2.dylib", # OSXFuse MacFuse compatibility layer
           "libmacfuse_i64.2.dylib", # OSXFuse MacFuse compatibility layer
           "libosxfuse_i32.2.dylib", # OSXFuse
@@ -259,22 +261,26 @@ module Homebrew
           "libsymsea*.dylib", # Symantec Endpoint Protection
           "sentinel.dylib", # SentinelOne
           "sentinel-*.dylib", # SentinelOne
+          "libASAF.dylib", # Apple Immersive Audio SDK
         ]
 
-        __check_stray_files "/usr/local/lib", "*.dylib", allow_list, <<~EOS
+        msg = __check_stray_files "/usr/local/lib", "*.dylib", allow_list, <<~EOS
           Unbrewed dylibs were found in /usr/local/lib.
           If you didn't put them there on purpose they could cause problems when
           building Homebrew formulae and may need to be deleted.
 
           Unexpected dylibs:
         EOS
+        Finding.new(msg) if msg.present?
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_stray_static_libs
         # Static libs which are generally OK should be added to this list,
         # with a short description of the software they come with.
         allow_list = [
+          "libfuse-t*.a", # FUSE-T
+          "libfuse3.a", # FUSE-T
           "libntfs-3g.a", # NTFS-3G
           "libntfs.a", # NTFS-3G
           "libublio.a", # NTFS-3G
@@ -287,38 +293,43 @@ module Homebrew
           "libtrustedcomponents.a", # Symantec Endpoint Protection
         ]
 
-        __check_stray_files "/usr/local/lib", "*.a", allow_list, <<~EOS
+        msg = __check_stray_files "/usr/local/lib", "*.a", allow_list, <<~EOS
           Unbrewed static libraries were found in /usr/local/lib.
           If you didn't put them there on purpose they could cause problems when
           building Homebrew formulae and may need to be deleted.
 
           Unexpected static libraries:
         EOS
+
+        Finding.new(msg) if msg.present?
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_stray_pcs
         # Package-config files which are generally OK should be added to this list,
         # with a short description of the software they come with.
         allow_list = [
           "fuse.pc", # OSXFuse/MacFuse
           "fuse3.pc", # OSXFuse/MacFuse
+          "fuse-t.pc", # FUSE-T
           "macfuse.pc", # OSXFuse MacFuse compatibility layer
           "osxfuse.pc", # OSXFuse
           "libntfs-3g.pc", # NTFS-3G
           "libublio.pc", # NTFS-3G
         ]
 
-        __check_stray_files "/usr/local/lib/pkgconfig", "*.pc", allow_list, <<~EOS
+        msg = __check_stray_files("/usr/local/lib/pkgconfig", "*.pc", allow_list, <<~EOS
           Unbrewed '.pc' files were found in /usr/local/lib/pkgconfig.
           If you didn't put them there on purpose they could cause problems when
           building Homebrew formulae and may need to be deleted.
 
           Unexpected '.pc' files:
         EOS
+        )
+        Finding.new(msg) if msg.present?
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_stray_las
         allow_list = [
           "libfuse.la", # MacFuse
@@ -331,16 +342,18 @@ module Homebrew
           "libublio.la", # NTFS-3G
         ]
 
-        __check_stray_files "/usr/local/lib", "*.la", allow_list, <<~EOS
+        msg = __check_stray_files("/usr/local/lib", "*.la", allow_list, <<~EOS
           Unbrewed '.la' files were found in /usr/local/lib.
           If you didn't put them there on purpose they could cause problems when
           building Homebrew formulae and may need to be deleted.
 
           Unexpected '.la' files:
         EOS
+        )
+        Finding.new(msg) if msg.present?
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_stray_headers
         allow_list = [
           "fuse.h", # MacFuse
@@ -352,16 +365,18 @@ module Homebrew
           "ntfs-3g/**/*.h", # NTFS-3G
         ]
 
-        __check_stray_files "/usr/local/include", "**/*.h", allow_list, <<~EOS
+        msg = __check_stray_files "/usr/local/include", "**/*.h", allow_list, <<~EOS
           Unbrewed header files were found in /usr/local/include.
           If you didn't put them there on purpose they could cause problems when
           building Homebrew formulae and may need to be deleted.
 
           Unexpected header files:
         EOS
+
+        Finding.new(msg) if msg.present?
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_broken_symlinks
         broken_symlinks = []
 
@@ -374,78 +389,116 @@ module Homebrew
         end
         return if broken_symlinks.empty?
 
-        inject_file_list broken_symlinks, <<~EOS
-          Broken symlinks were found. Remove them with `brew cleanup`:
-        EOS
+        Finding.new(
+          inject_file_list(broken_symlinks, <<~EOS
+            Broken symlinks were found:
+          EOS
+          ),
+          remediation: Finding::Remediation.new(
+            text:     <<~EOS,
+              Remove them with `brew cleanup`
+            EOS
+            commands: ["brew cleanup"],
+          ),
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_tmpdir_sticky_bit
         world_writable = HOMEBREW_TEMP.stat.mode & 0777 == 0777
         return if !world_writable || HOMEBREW_TEMP.sticky?
 
-        <<~EOS
-          #{HOMEBREW_TEMP} is world-writable but does not have the sticky bit set.
-          To set it, run the following command:
-            sudo chmod +t #{HOMEBREW_TEMP}
-        EOS
+        Finding.new(
+          <<~EOS,
+            #{HOMEBREW_TEMP} is world-writable but does not have the sticky bit set.
+          EOS
+          remediation: Finding::Remediation.new(
+            text:     <<~EOS,
+              To set it, run the following command:
+                sudo chmod +t #{HOMEBREW_TEMP}
+            EOS
+            commands: ["sudo chmod +t #{HOMEBREW_TEMP}"],
+          ),
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_exist_directories
         return if HOMEBREW_PREFIX.writable?
 
         not_exist_dirs = Keg.must_exist_directories.reject(&:exist?)
         return if not_exist_dirs.empty?
 
-        <<~EOS
-          The following directories do not exist:
-          #{not_exist_dirs.join("\n")}
-
-          You should create these directories and change their ownership to your user.
-            sudo mkdir -p #{not_exist_dirs.join(" ")}
-            sudo chown -R #{current_user} #{not_exist_dirs.join(" ")}
-        EOS
+        Finding.new(
+          <<~EOS,
+            The following directories do not exist:
+            #{not_exist_dirs.join("\n")}
+          EOS
+          remediation: Finding::Remediation.new(
+            text:     <<~EOS,
+              You should create these directories and change their ownership to your user.
+                sudo mkdir -p #{not_exist_dirs.join(" ")}
+                sudo chown -R #{current_user} #{not_exist_dirs.join(" ")}
+            EOS
+            commands: ["sudo mkdir -p #{not_exist_dirs.join(" ")}",
+                       "sudo chown -R #{current_user} #{not_exist_dirs.join(" ")}"],
+          ),
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_access_directories
         not_writable_dirs =
           Keg.must_be_writable_directories.select(&:exist?)
              .reject(&:writable?)
         return if not_writable_dirs.empty?
 
-        <<~EOS
-          The following directories are not writable by your user:
-          #{not_writable_dirs.join("\n")}
+        Finding.new(
+          <<~EOS,
+            The following directories are not writable by your user:
+            #{not_writable_dirs.join("\n")}
+          EOS
+          remediation: Finding::Remediation.new(
+            text:     <<~EOS,
+              You should change the ownership of these directories to your user.
+                sudo chown -R #{current_user} #{not_writable_dirs.join(" ")}
 
-          You should change the ownership of these directories to your user.
-            sudo chown -R #{current_user} #{not_writable_dirs.join(" ")}
-
-          And make sure that your user has write permission.
-            chmod u+w #{not_writable_dirs.join(" ")}
-        EOS
+              And make sure that your user has write permission.
+                chmod u+w #{not_writable_dirs.join(" ")}
+            EOS
+            commands: ["sudo chown -R #{current_user} #{not_writable_dirs.join(" ")}",
+                       "chmod u+w #{not_writable_dirs.join(" ")}"],
+          ),
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_multiple_cellars
         return if HOMEBREW_PREFIX.to_s == HOMEBREW_REPOSITORY.to_s
         return unless (HOMEBREW_REPOSITORY/"Cellar").exist?
         return unless (HOMEBREW_PREFIX/"Cellar").exist?
 
-        <<~EOS
-          You have multiple Cellars.
-          You should delete #{HOMEBREW_REPOSITORY}/Cellar:
-            rm -rf #{HOMEBREW_REPOSITORY}/Cellar
-        EOS
+        Finding.new(
+          <<~EOS,
+            You have multiple Cellars.
+          EOS
+          remediation: Finding::Remediation.new(
+            text:     <<~EOS,
+              You should delete #{HOMEBREW_REPOSITORY}/Cellar:
+                rm -rf #{HOMEBREW_REPOSITORY}/Cellar
+            EOS
+            commands: ["rm -rf #{HOMEBREW_REPOSITORY}/Cellar"],
+          ),
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_user_path_1
         @seen_prefix_bin = false
         @seen_prefix_sbin = false
 
         message = ""
+        remediation = T.let(nil, T.nilable(Finding::Remediation))
 
         paths.each do |p|
           case p
@@ -461,12 +514,18 @@ module Homebrew
                 message = inject_file_list conflicts, <<~EOS
                   /usr/bin occurs before #{HOMEBREW_PREFIX}/bin in your PATH.
                   This means that system-provided programs will be used instead of those
-                  provided by Homebrew. Consider setting your PATH so that
-                  #{HOMEBREW_PREFIX}/bin occurs before /usr/bin. Here is a one-liner:
-                    #{Utils::Shell.prepend_path_in_profile("#{HOMEBREW_PREFIX}/bin")}
+                  provided by Homebrew.
 
                   The following tools exist at both paths:
                 EOS
+                remediation = Finding::Remediation.new(
+                  text:     <<~EOS,
+                    Consider setting your PATH so that
+                    #{HOMEBREW_PREFIX}/bin occurs before /usr/bin. Here is a one-liner:
+                      #{Utils::Shell.prepend_path_in_profile("#{HOMEBREW_PREFIX}/bin")}
+                  EOS
+                  commands: [T.must(Utils::Shell.prepend_path_in_profile("#{HOMEBREW_PREFIX}/bin"))],
+                )
               end
             end
           when "#{HOMEBREW_PREFIX}/bin"
@@ -477,22 +536,29 @@ module Homebrew
         end
 
         @user_path_1_done = true
-        message unless message.empty?
+        Finding.new(message, remediation:) if message.present?
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_user_path_2
         check_user_path_1 unless @user_path_1_done
         return if @seen_prefix_bin
 
-        <<~EOS
-          Homebrew's "bin" was not found in your PATH.
-          Consider setting your PATH for example like so:
-            #{Utils::Shell.prepend_path_in_profile("#{HOMEBREW_PREFIX}/bin")}
-        EOS
+        Finding.new(
+          <<~EOS,
+            Homebrew's "bin" was not found in your PATH.
+          EOS
+          remediation: Finding::Remediation.new(
+            text:     <<~EOS,
+              Consider setting your PATH for example like so:
+                  #{Utils::Shell.prepend_path_in_profile("#{HOMEBREW_PREFIX}/bin")}
+            EOS
+            commands: [T.must(Utils::Shell.prepend_path_in_profile("#{HOMEBREW_PREFIX}/bin"))],
+          ),
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_user_path_3
         check_user_path_1 unless @user_path_1_done
         return if @seen_prefix_sbin
@@ -503,35 +569,44 @@ module Homebrew
         return if sbin.children.empty?
         return if sbin.children.one? && sbin.children.first.basename.to_s == ".keepme"
 
-        <<~EOS
-          Homebrew's "sbin" was not found in your PATH but you have installed
-          formulae that put executables in #{HOMEBREW_PREFIX}/sbin.
-          Consider setting your PATH for example like so:
-            #{Utils::Shell.prepend_path_in_profile("#{HOMEBREW_PREFIX}/sbin")}
-        EOS
+        Finding.new(
+          <<~EOS,
+            Homebrew's "sbin" was not found in your PATH but you have installed
+            formulae that put executables in #{HOMEBREW_PREFIX}/sbin.
+          EOS
+          remediation: Finding::Remediation.new(
+            text:     <<~EOS,
+              Consider setting your PATH for example like so:
+                #{Utils::Shell.prepend_path_in_profile("#{HOMEBREW_PREFIX}/sbin")}
+            EOS
+            commands: [T.must(Utils::Shell.prepend_path_in_profile("#{HOMEBREW_PREFIX}/sbin"))],
+          ),
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_symlinked_cellar
         return unless HOMEBREW_CELLAR.exist?
         return unless HOMEBREW_CELLAR.symlink?
 
-        <<~EOS
-          Symlinked Cellars can cause problems.
-          Your Homebrew Cellar is a symlink: #{HOMEBREW_CELLAR}
-                          which resolves to: #{HOMEBREW_CELLAR.realpath}
+        Finding.new(
+          <<~EOS,
+            Symlinked Cellars can cause problems.
+            Your Homebrew Cellar is a symlink: #{HOMEBREW_CELLAR}
+                            which resolves to: #{HOMEBREW_CELLAR.realpath}
 
-          The recommended Homebrew installations are either:
-          (A) Have Cellar be a real directory inside of your `$HOMEBREW_PREFIX`
-          (B) Symlink "bin/brew" into your prefix, but don't symlink "Cellar".
+            The recommended Homebrew installations are either:
+            (A) Have Cellar be a real directory inside of your `$HOMEBREW_PREFIX`
+            (B) Symlink "bin/brew" into your prefix, but don't symlink "Cellar".
 
-          Older installations of Homebrew may have created a symlinked Cellar, but this can
-          cause problems when two formulae install to locations that are mapped on top of each
-          other during the linking step.
-        EOS
+            Older installations of Homebrew may have created a symlinked Cellar, but this can
+            cause problems when two formulae install to locations that are mapped on top of each
+            other during the linking step.
+          EOS
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_git_version
         minimum_version = ENV.fetch("HOMEBREW_MINIMUM_GIT_VERSION")
         return unless Utils::Git.available?
@@ -539,52 +614,117 @@ module Homebrew
 
         git = Formula["git"]
         git_upgrade_cmd = git.any_version_installed? ? "upgrade" : "install"
-        <<~EOS
-          An outdated version (#{Utils::Git.version}) of Git was detected in your PATH.
-          Git #{minimum_version} or newer is required for Homebrew.
-          Please upgrade:
-            brew #{git_upgrade_cmd} git
-        EOS
+        Finding.new(
+          <<~EOS,
+            An outdated version (#{Utils::Git.version}) of Git was detected in your PATH.
+            Git #{minimum_version} or newer is required for Homebrew.
+          EOS
+          remediation: Finding::Remediation.new(
+            text:     <<~EOS,
+              Please upgrade:
+                brew #{git_upgrade_cmd} git
+            EOS
+            commands: ["brew #{git_upgrade_cmd} git"],
+          ),
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_git
         return if Utils::Git.available?
 
-        <<~EOS
-          Git could not be found in your PATH.
-          Homebrew uses Git for several internal functions and some formulae use Git
-          checkouts instead of stable tarballs. You may want to install Git:
-            brew install git
-        EOS
+        Finding.new(
+          <<~EOS,
+            Git could not be found in your PATH.
+            Homebrew uses Git for several internal functions and some formulae use Git
+            checkouts instead of stable tarballs.
+          EOS
+          remediation: Finding::Remediation.new(
+            text:     <<~EOS,
+              You may want to install Git:
+                brew install git
+            EOS
+            commands: ["brew install git"],
+          ),
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_git_newline_settings
         return unless Utils::Git.available?
 
         autocrlf = HOMEBREW_REPOSITORY.cd { `git config --get core.autocrlf`.chomp }
         return if autocrlf != "true"
 
-        <<~EOS
-          Suspicious Git newline settings found.
+        Finding.new(
+          <<~EOS,
+            Suspicious Git newline settings found.
 
-          The detected Git newline settings will cause checkout problems:
-            core.autocrlf = #{autocrlf}
-
-          If you are not routinely dealing with Windows-based projects,
-          consider removing these by running:
-            git config --global core.autocrlf input
-        EOS
+            The detected Git newline settings will cause checkout problems:
+              core.autocrlf = #{autocrlf}
+          EOS
+          remediation: Finding::Remediation.new(
+            text:     <<~EOS,
+              If you are not routinely dealing with Windows-based projects,
+              consider removing these by running:
+                git config --global core.autocrlf input
+            EOS
+            commands: ["git config --global core.autocrlf input"],
+          ),
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
+      def check_homebrew_repository_git_hooks
+        found = T.let([], T::Array[Pathname])
+
+        hooks_dir = HOMEBREW_REPOSITORY/".git/hooks"
+        if hooks_dir.directory?
+          found += hooks_dir.children.reject { |path| path.basename.to_s.end_with?(".sample") }.sort_by(&:to_s)
+        end
+
+        gitconfig = HOMEBREW_REPOSITORY/".gitconfig"
+        found << gitconfig if gitconfig.exist?
+        return if found.empty?
+
+        Finding.new(
+          inject_file_list(found, <<~EOS
+            Git hooks or a repository-local `.gitconfig` were found in your Homebrew repository.
+            Homebrew does not use these, and they can break Homebrew operations.
+
+            Paths found:
+          EOS
+          ),
+          remediation: Finding::Remediation.new(
+            text:     <<~EOS,
+              Remove them with:
+                rm -rf "#{HOMEBREW_REPOSITORY}/.git/hooks" "#{HOMEBREW_REPOSITORY}/.gitconfig"
+            EOS
+            commands: ["rm -rf \"#{HOMEBREW_REPOSITORY}/.git/hooks\" \"#{HOMEBREW_REPOSITORY}/.gitconfig\""],
+          ),
+        )
+      end
+
+      sig { returns(T.nilable(Finding)) }
       def check_brew_git_origin
         repo = GitRepository.new(HOMEBREW_REPOSITORY)
         examine_git_origin(repo, Homebrew::EnvConfig.brew_git_remote)
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
+      def check_for_nix_homebrew
+        return unless OS.nix_managed_homebrew?
+
+        Finding.new(
+          <<~EOS,
+            Your Homebrew installation is managed by Nix.
+            Homebrew does not support Nix-managed installations.
+          EOS
+          tier: 3,
+        )
+      end
+
+      sig { returns(T.nilable(Finding)) }
       def check_coretap_integrity
         core_tap = CoreTap.instance
         unless core_tap.installed?
@@ -596,7 +736,7 @@ module Homebrew
         broken_tap(core_tap) || examine_git_origin(core_tap.git_repository, Homebrew::EnvConfig.core_git_remote)
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_casktap_integrity
         core_cask_tap = CoreCaskTap.instance
         return unless core_cask_tap.installed?
@@ -604,27 +744,53 @@ module Homebrew
         broken_tap(core_cask_tap) || examine_git_origin(core_cask_tap.git_repository, T.must(core_cask_tap.remote))
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_tap_git_branch
         return if ENV["CI"]
         return unless Utils::Git.available?
 
-        commands = Tap.installed.filter_map do |tap|
-          next if tap.git_repository.default_origin_branch?
+        deprecated_master = []
+        commands = []
 
-          "git -C $(brew --repo #{tap.name}) checkout #{tap.git_repository.origin_branch_name}"
+        brew_repo = GitRepository.new(HOMEBREW_REPOSITORY)
+        deprecated_master << "Homebrew/brew" if brew_repo.branch_name == "master"
+
+        Tap.installed.each do |tap|
+          if tap.git_repository.branch_name == "master" && tap.official?
+            deprecated_master << tap.name
+          elsif !tap.git_repository.default_origin_branch?
+            commands << "git -C $(brew --repo #{tap.name}) checkout #{tap.git_repository.origin_branch_name}"
+          end
         end
 
-        return if commands.blank?
+        message = +""
 
-        <<~EOS
-          Some taps are not on the default git origin branch and may not receive
-          updates. If this is a surprise to you, check out the default branch with:
-            #{commands.join("\n  ")}
-        EOS
+        if deprecated_master.any?
+          message << <<~EOS
+            The following repositories are on the deprecated "master" branch.
+            The "master" branch sync will stop and this warning will become an error
+            when Homebrew 5.2.0 is released (no earlier than 2026-06-10).
+            Run `brew update` to migrate to "main":
+              #{deprecated_master.join("\n  ")}
+          EOS
+        end
+
+        remediation = nil
+        if commands.any?
+          message << "\n" if deprecated_master.any?
+          message << <<~EOS
+            Some taps are not on the default git origin branch and may not receive updates.
+          EOS
+          remediation = Finding::Remediation.new(text: <<~EOS, commands: commands)
+            If this is a surprise to you, check out the default branch with:
+              #{commands.join("\n  ")}
+          EOS
+        end
+
+        Finding.new(message, remediation:) if message.present?
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_deprecated_official_taps
         tapped_deprecated_taps =
           Tap.select(&:official?).map(&:repository) & DEPRECATED_OFFICIAL_TAPS
@@ -634,11 +800,116 @@ module Homebrew
 
         return if tapped_deprecated_taps.empty?
 
-        <<~EOS
-          You have the following deprecated, official taps tapped:
-            Homebrew/homebrew-#{tapped_deprecated_taps.join("\n  Homebrew/homebrew-")}
-          Untap them with `brew untap`.
+        Finding.new(
+          <<~EOS,
+            You have the following deprecated, official taps tapped:
+              Homebrew/homebrew-#{tapped_deprecated_taps.join("\n  Homebrew/homebrew-")}
+          EOS
+          remediation: <<~EOS,
+            Untap them with `brew untap`.
+          EOS
+        )
+      end
+
+      sig { returns(T.nilable(Finding)) }
+      def check_untrusted_taps
+        return if Homebrew::EnvConfig.no_require_tap_trust?
+
+        untrusted_taps = Homebrew::Trust.wholly_untrusted_taps
+        return if untrusted_taps.empty?
+
+        untrusted_tap_names = untrusted_taps.map(&:name)
+        untrusted_tap_name_set = untrusted_tap_names.to_set
+        installed_formulae_by_tap = {}
+        installed_casks_by_tap = {}
+        Formula.racks.each do |rack|
+          next unless (keg = Keg.from_rack(rack))
+          next unless (tap = keg.tab.tap)
+          next unless untrusted_tap_name_set.include?(tap.name)
+
+          installed_formulae = installed_formulae_by_tap[tap.name] ||= []
+          installed_formulae << "#{tap.name}/#{rack.basename}"
+        rescue
+          nil
+        end
+        installed_formula_message = installed_formulae_by_tap.sort_by(&:first).filter_map do |_tap_name, formulae|
+          next if formulae.empty?
+
+          "  brew trust --formula #{formulae.sort.join(" ")}"
+        end.join("\n")
+        Cask::Caskroom.casks.each do |cask|
+          next unless (tap = cask.tab.tap)
+          next unless untrusted_tap_name_set.include?(tap.name)
+
+          installed_casks = installed_casks_by_tap[tap.name] ||= []
+          installed_casks << "#{tap.name}/#{cask.token}"
+        end
+        installed_cask_message = installed_casks_by_tap.sort_by(&:first).filter_map do |_tap_name, casks|
+          next if casks.empty?
+
+          "  brew trust --cask #{casks.sort.join(" ")}"
+        end.join("\n")
+        installed_items_from_untrusted_taps = installed_formula_message.present? || installed_cask_message.present?
+        untap_message = "Untap them with:\n  brew untap #{untrusted_tap_names.join(" ")}"
+        generic_trust_types = []
+        generic_trust_commands = []
+        if installed_formula_message.blank?
+          generic_trust_types << "formulae"
+          generic_trust_commands << "  brew trust --formula <user>/<tap>/<formula>"
+        end
+        if installed_cask_message.blank?
+          generic_trust_types << "casks"
+          generic_trust_commands << "  brew trust --cask <user>/<tap>/<cask>"
+        end
+        generic_trust_types << "commands"
+        generic_trust_commands << "  brew trust --command <user>/<tap>/<command>"
+        generic_trust_prefix = if installed_items_from_untrusted_taps
+          "Trust other specific"
+        else
+          "Trust specific"
+        end
+        generic_trust_message = "#{generic_trust_prefix} #{generic_trust_types.to_sentence} with:\n" \
+                                "#{generic_trust_commands.join("\n")}"
+        trust_messages = if installed_items_from_untrusted_taps
+          ["Prefer trusting only the specific formulae, casks or commands you need."]
+        else
+          [untap_message]
+        end
+        if installed_formula_message.present?
+          trust_messages << "Trust installed formulae from these taps with:\n#{installed_formula_message}"
+        end
+        if installed_cask_message.present?
+          trust_messages << "Trust installed casks from these taps with:\n#{installed_cask_message}"
+        end
+        trust_messages << generic_trust_message
+        trust_messages << <<~EOS.chomp
+          Whole-tap trust is broader and includes all current and future formulae,
+          casks and commands from the listed taps. Trust whole taps with:
+            brew trust #{untrusted_tap_names.join(" ")}
         EOS
+        trust_messages << untap_message if installed_items_from_untrusted_taps
+        unless Homebrew::EnvConfig.no_env_hints?
+          trust_messages << <<~EOS.chomp
+            To disable trust checks:
+              export HOMEBREW_NO_REQUIRE_TAP_TRUST=1
+            This is not recommended and will be removed in a later release.
+          EOS
+        end
+        trust_messages << <<~EOS.chomp
+          For more information, see:
+            #{Formatter.url("https://docs.brew.sh/Tap-Trust")}
+        EOS
+
+        Finding.new(
+          <<~EOS,
+            The following taps are not trusted:
+              #{untrusted_tap_names.join("\n  ")}
+
+            Homebrew is currently ignoring formulae, casks and commands from these taps because tap trust is required.
+          EOS
+          links:       ["https://docs.brew.sh/Tap-Trust"],
+          remediation: trust_messages.join("\n"),
+        )
       end
 
       sig { params(formula: Formula).returns(T::Boolean) }
@@ -655,7 +926,7 @@ module Homebrew
         false
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_other_frameworks
         # Other frameworks that are known to cause problems when present
         frameworks_to_check = %w[
@@ -668,75 +939,91 @@ module Homebrew
                            .select { |framework| File.exist? framework }
         return if frameworks_found.empty?
 
-        inject_file_list frameworks_found, <<~EOS
-          Some frameworks can be picked up by CMake's build system and will likely
-          cause the build to fail. To compile CMake, you may wish to move these
-          out of the way:
-        EOS
+        Finding.new(
+          <<~EOS,
+            Some frameworks can be picked up by CMake's build system and will likely
+            cause the build to fail.
+          EOS
+          remediation: <<~EOS,
+            To compile CMake, you may wish to move these out of the way:
+            #{frameworks_found.join("\n")}
+          EOS
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_tmpdir
         tmpdir = ENV.fetch("TMPDIR", nil)
         return if tmpdir.nil? || File.directory?(tmpdir)
 
-        <<~EOS
-          TMPDIR #{tmpdir.inspect} doesn't exist.
-        EOS
+        Finding.new(
+          <<~EOS,
+            TMPDIR #{tmpdir.inspect} doesn't exist.
+          EOS
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_missing_deps
-        return unless HOMEBREW_CELLAR.exist?
+        return if !HOMEBREW_CELLAR.exist? && !Cask::Caskroom.path.exist?
 
         missing = Set.new
-        Homebrew::Diagnostic.missing_deps(Formula.installed).each_value do |deps|
+        Homebrew::Missing.deps(Formula.installed, Cask::Caskroom.casks).each_value do |deps|
           missing.merge(deps)
         end
         return if missing.empty?
 
-        <<~EOS
-          Some installed formulae are missing dependencies.
-          You should `brew install` the missing dependencies:
-            brew install #{missing.map(&:to_installed_formula).sort_by(&:full_name) * " "}
-
-          Run `brew missing` for more details.
-        EOS
+        Finding.new(
+          <<~EOS,
+            Some installed formulae or casks are missing dependencies.
+            Run `brew missing` for more details.
+          EOS
+          remediation: Finding::Remediation.new(
+            text:     <<~EOS,
+              You should `brew install` the missing dependencies:
+                brew install #{missing.sort * " "}
+            EOS
+            commands: ["brew install #{missing.sort * " "}"],
+          ),
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_deprecated_disabled
         return unless HOMEBREW_CELLAR.exist?
 
-        deprecated_or_disabled = Formula.installed.select(&:deprecated?)
-        deprecated_or_disabled += Formula.installed.select(&:disabled?)
+        deprecated_or_disabled = Formula.installed.select { |f| f.deprecated? || f.disabled? }
         return if deprecated_or_disabled.empty?
 
-        <<~EOS
-          Some installed formulae are deprecated or disabled.
-          You should find replacements for the following formulae:
-            #{deprecated_or_disabled.sort_by(&:full_name).uniq * "\n  "}
-        EOS
+        Finding.new(
+          "Some installed formulae are deprecated or disabled.",
+          affects:     deprecated_or_disabled.map(&:full_name),
+          remediation: <<~EOS,
+            You should find replacements for the following formulae:
+                #{deprecated_or_disabled.sort_by(&:full_name).uniq * "\n  "}
+          EOS
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_cask_deprecated_disabled
         deprecated_or_disabled = Cask::Caskroom.casks.select(&:deprecated?)
         deprecated_or_disabled += Cask::Caskroom.casks.select(&:disabled?)
         return if deprecated_or_disabled.empty?
 
-        <<~EOS
-          Some installed casks are deprecated or disabled.
-          You should find replacements for the following casks:
+        Finding.new(
+          "Some installed casks are deprecated or disabled.",
+          affects:     deprecated_or_disabled.map(&:token),
+          remediation: <<~EOS,
+            You should find replacements for the following casks:
             #{deprecated_or_disabled.sort_by(&:token).uniq * "\n  "}
-        EOS
+          EOS
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T::Array[Finding]) }
       def check_git_status
-        return unless Utils::Git.available?
-
-        message = T.let(nil, T.nilable(String))
+        return [] unless Utils::Git.available?
 
         repos = {
           "Homebrew/brew"          => HOMEBREW_REPOSITORY,
@@ -744,35 +1031,47 @@ module Homebrew
           "Homebrew/homebrew-cask" => CoreCaskTap.instance.path,
         }
 
+        status = []
         repos.each do |name, path|
-          next unless path.exist?
+          finding = __tap_git_status(name, path)
+          status << finding if finding.present?
+        end
 
-          status = path.cd do
-            `git status --untracked-files=all --porcelain 2>/dev/null`
-          end
-          next if status.blank?
+        status
+      end
 
-          message ||= ""
-          message += "\n" unless message.empty?
-          message += <<~EOS
-            You have uncommitted modifications to #{name}.
+      sig { params(tap: String, path: Pathname).returns(T.nilable(Finding)) }
+      def __tap_git_status(tap, path)
+        return unless path.exist?
+
+        status = path.cd do
+          `git status --untracked-files=all --porcelain 2>/dev/null`
+        end
+        return if status.blank?
+
+        message = <<~EOS
+          You have uncommitted modifications to #{tap}.
+        EOS
+        remediation = Finding::Remediation.new(
+          commands: ["git -C \"#{path}\" stash -u && git -C \"#{path}\" clean -d -f"],
+          text:     <<~EOS,
             If this is a surprise to you, then you should stash these modifications.
             Stashing returns Homebrew to a pristine state but can be undone
             should you later need to do so for some reason.
+
               git -C "#{path}" stash -u && git -C "#{path}" clean -d -f
           EOS
+        )
 
-          modified = status.split("\n")
-          message += inject_file_list modified, <<~EOS
+        modified = status.split("\n")
+        message += inject_file_list modified, <<~EOS
+          Uncommitted files:
+        EOS
 
-            Uncommitted files:
-          EOS
-        end
-
-        message
+        Finding.new(message, affects: modified, remediation:) if message.present?
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_non_prefixed_coreutils
         coreutils = Formula["coreutils"]
         return unless coreutils.any_version_installed?
@@ -780,26 +1079,34 @@ module Homebrew
         gnubin = %W[#{coreutils.opt_libexec}/gnubin #{coreutils.libexec}/gnubin]
         return unless paths.intersect?(gnubin)
 
-        <<~EOS
-          Putting non-prefixed coreutils in your path can cause GMP builds to fail.
-        EOS
+        Finding.new(
+          <<~EOS,
+            Putting non-prefixed coreutils in your path can cause GMP builds to fail.
+          EOS
+        )
       rescue FormulaUnavailableError
         nil
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_pydistutils_cfg_in_home
         return unless File.exist? "#{Dir.home}/.pydistutils.cfg"
 
-        <<~EOS
-          A '.pydistutils.cfg' file was found in $HOME, which may cause Python
-          builds to fail. See:
-            #{Formatter.url("https://bugs.python.org/issue6138")}
-            #{Formatter.url("https://bugs.python.org/issue4655")}
-        EOS
+        Finding.new(
+          <<~EOS,
+            A '.pydistutils.cfg' file was found in $HOME, which may cause Python
+            builds to fail. See:
+              #{Formatter.url("https://bugs.python.org/issue6138")}
+              #{Formatter.url("https://bugs.python.org/issue4655")}
+          EOS
+          links: [
+            "https://bugs.python.org/issue6138",
+            "https://bugs.python.org/issue4655",
+          ],
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_unreadable_installed_formula
         formula_unavailable_exceptions = []
         Formula.racks.each do |rack|
@@ -807,38 +1114,53 @@ module Homebrew
         rescue FormulaUnreadableError, FormulaClassUnavailableError,
                TapFormulaUnreadableError, TapFormulaClassUnavailableError => e
           formula_unavailable_exceptions << e
-        rescue FormulaUnavailableError, TapFormulaAmbiguityError
+        rescue Homebrew::UntrustedTapError, FormulaUnavailableError, TapFormulaAmbiguityError
           nil
         end
         return if formula_unavailable_exceptions.empty?
 
-        <<~EOS
-          Some installed formulae are not readable:
-            #{formula_unavailable_exceptions.join("\n\n  ")}
-        EOS
+        Finding.new(
+          <<~EOS,
+            Some installed formulae are not readable:
+              #{formula_unavailable_exceptions.join("\n\n  ")}
+          EOS
+          affects: formula_unavailable_exceptions,
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_unlinked_but_not_keg_only
         unlinked = Formula.racks.reject do |rack|
           next true if (HOMEBREW_LINKED_KEGS/rack.basename).directory?
 
           begin
             Formulary.from_rack(rack).keg_only?
+          rescue Homebrew::UntrustedTapError
+            true
           rescue FormulaUnavailableError, TapFormulaAmbiguityError
             false
           end
         end.map(&:basename)
         return if unlinked.empty?
 
-        inject_file_list unlinked, <<~EOS
-          You have unlinked kegs in your Cellar.
-          Leaving kegs unlinked can lead to build-trouble and cause formulae that depend on
-          those kegs to fail to run properly once built. Run `brew link` on these:
-        EOS
+        Finding.new(
+          <<~EOS,
+            You have unlinked kegs in your Cellar.
+            Leaving kegs unlinked can lead to build-trouble and cause formulae that depend on
+            those kegs to fail to run properly once built.
+          EOS
+          affects:     unlinked.map(&:to_s),
+          remediation: Finding::Remediation.new(
+            text:     inject_file_list(unlinked, <<~EOS
+              Run `brew link` on these:
+            EOS
+            ),
+            commands: unlinked.map { |unlink| "brew link #{unlink}" },
+          ),
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_external_cmd_name_conflict
         cmds = Commands.tap_cmd_directories.flat_map { |p| Dir["#{p}/brew-*"] }.uniq
         cmds = cmds.select { |cmd| File.file?(cmd) && File.executable?(cmd) }
@@ -863,10 +1185,10 @@ module Homebrew
           EOS
         end
 
-        message
+        Finding.new(message)
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_tap_ruby_files_locations
         bad_tap_files = {}
         Tap.installed.each do |tap|
@@ -884,30 +1206,31 @@ module Homebrew
         end
         return if bad_tap_files.empty?
 
-        bad_tap_files.keys.map do |tap|
+        Finding.new(bad_tap_files.keys.map do |tap|
           <<~EOS
             Found Ruby file outside #{tap} tap formula directory.
             (#{tap.formula_dir}):
               #{bad_tap_files[tap].join("\n  ")}
           EOS
-        end.join("\n")
+        end.join("\n"))
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_homebrew_prefix
         return if Homebrew.default_prefix?
 
-        <<~EOS
-          Your Homebrew's prefix is not #{Homebrew::DEFAULT_PREFIX}.
+        Finding.new(
+          <<~EOS,
+            Your Homebrew's prefix is not #{Homebrew::DEFAULT_PREFIX}.
 
-          Most of Homebrew's bottles (binary packages) can only be used with the default prefix.
-          Consider uninstalling Homebrew and reinstalling into the default prefix.
-
-          #{support_tier_message(tier: 3)}
-        EOS
+            Most of Homebrew's bottles (binary packages) can only be used with the default prefix.
+          EOS
+          tier:        3,
+          remediation: "Consider uninstalling Homebrew and reinstalling into the default prefix.",
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_deleted_formula
         kegs = Keg.all
 
@@ -934,30 +1257,41 @@ module Homebrew
 
         return if deleted_formulae.blank?
 
-        <<~EOS
-          Some installed kegs have no formulae!
-          This means they were either deleted or installed manually.
-          You should find replacements for the following formulae:
-            #{deleted_formulae.join("\n  ")}
-        EOS
+        Finding.new(
+          <<~EOS,
+            Some installed kegs have no formulae!
+            This means they were either deleted or installed manually.
+
+          EOS
+          affects:     deleted_formulae,
+          remediation: <<~EOS,
+            You should find replacements for the following formulae:
+              #{deleted_formulae.join("\n  ")}
+          EOS
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_unnecessary_core_tap
         return if Homebrew::EnvConfig.developer?
         return if Homebrew::EnvConfig.no_install_from_api?
         return if Homebrew::EnvConfig.devcmdrun?
         return unless CoreTap.instance.installed?
 
-        <<~EOS
-          You have an unnecessary local Core tap!
-          This can cause problems installing up-to-date formulae.
+        remediation = Finding::Remediation.new(text: <<~EOS, commands: ["brew untap #{CoreTap.instance.name}"])
           Please remove it by running:
            brew untap #{CoreTap.instance.name}
         EOS
+        Finding.new(
+          <<~EOS,
+            You have an unnecessary local Core tap!
+            This can cause problems installing up-to-date formulae.
+          EOS
+          remediation:,
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_unnecessary_cask_tap
         return if Homebrew::EnvConfig.developer?
         return if Homebrew::EnvConfig.no_install_from_api?
@@ -966,64 +1300,112 @@ module Homebrew
         cask_tap = CoreCaskTap.instance
         return unless cask_tap.installed?
 
-        <<~EOS
-          You have an unnecessary local Cask tap.
-          This can cause problems installing up-to-date casks.
+        remediation = Finding::Remediation.new(text: <<~EOS, commands: ["brew untap #{cask_tap.name}"])
           Please remove it by running:
-            brew untap #{cask_tap.name}
+           brew untap #{cask_tap.name}
         EOS
+        Finding.new(
+          <<~EOS,
+            You have an unnecessary local Cask tap.
+            This can cause problems installing up-to-date casks.
+          EOS
+          remediation:,
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_deprecated_cask_taps
         tapped_caskroom_taps = ::Tap.select { |t| t.user == "caskroom" || t.name == "phinze/cask" }
                                     .map(&:name)
         return if tapped_caskroom_taps.empty?
 
-        <<~EOS
-          You have the following deprecated Cask taps installed:
-            #{tapped_caskroom_taps.join("\n  ")}
-          Please remove them with:
-            brew untap #{tapped_caskroom_taps.join(" ")}
-        EOS
+        remediation = Finding::Remediation.new(
+          text:     <<~EOS,
+            Please remove it by running:
+             brew untap #{tapped_caskroom_taps.join(" ")}
+          EOS
+          commands: ["brew untap #{tapped_caskroom_taps.join(" ")}"],
+        )
+        Finding.new(
+          <<~EOS,
+            You have the following deprecated Cask taps installed:
+              #{tapped_caskroom_taps.join("\n  ")}
+          EOS
+          remediation:,
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_cask_software_versions
         add_info "Homebrew Version", HOMEBREW_VERSION
 
         nil
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_cask_install_location
         locations = Dir.glob(HOMEBREW_CELLAR.join("brew-cask", "*")).reverse
         return if locations.empty?
 
-        locations.map do |l|
-          "Legacy install at #{l}. Run `brew uninstall --force brew-cask`."
-        end.join "\n"
+        Finding.new(
+          locations.map do |l|
+            "Legacy install at #{l}."
+          end.join("\n"),
+          remediation: <<~EOS,
+            Run `brew uninstall --force brew-cask`.
+          EOS
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_cask_staging_location
         # Skip this check when running CI since the staging path is not writable for security reasons
         return if GitHub::Actions.env_set?
 
         path = Cask::Caskroom.path
 
-        add_info "Homebrew Cask Staging Location", user_tilde(path.to_s)
+        add_info "Cask Staging Location", user_tilde(path.to_s)
 
         return if !path.exist? || path.writable?
 
-        <<~EOS
-          The staging path #{user_tilde(path.to_s)} is not writable by the current user.
-          To fix, run:
-            sudo chown -R #{current_user} #{user_tilde(path.to_s)}
-        EOS
+        remediation = Finding::Remediation.new(
+          text:     <<~EOS,
+            To fix, run:
+              sudo chown -R #{current_user} #{user_tilde(path.to_s)}
+          EOS
+          commands: ["sudo chown -R #{current_user} #{user_tilde(path.to_s)}"],
+        )
+        Finding.new(
+          <<~EOS,
+            The staging path #{user_tilde(path.to_s)} is not writable by the current user.
+          EOS
+          remediation:,
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
+      def check_cask_corrupt_dirs
+        corrupt = Cask::Caskroom.corrupt_cask_dirs
+        return if corrupt.empty?
+
+        fixes = corrupt.map { |token| "brew reinstall --cask --force #{token}" }
+        Finding.new(
+          <<~EOS,
+            Some directories in the Caskroom do not have valid metadata.
+              #{corrupt.map { |token| "#{Cask::Caskroom.path}/#{token}" }.join("\n  ")}
+            The following #{Utils.pluralize("cask", corrupt.count)} cannot be upgraded as-is.
+          EOS
+          remediation: Finding::Remediation.new(
+            text:     <<~EOS,
+              To fix this, run:
+                #{fixes.join("\n  ")}
+            EOS
+            commands: fixes,
+          ),
+        )
+      end
+
+      sig { returns(T.nilable(Finding)) }
       def check_cask_taps
         error_tap_paths = []
 
@@ -1040,22 +1422,24 @@ module Homebrew
 
           "#{tap.path} (#{Utils.pluralize("cask", cask_count, include_count: true)})"
         end
-        add_info "Homebrew Cask Taps:", taps_info
+        add_info "Cask Taps:", taps_info
 
         taps_string = Utils.pluralize("tap", error_tap_paths.count)
-        "Unable to read from cask #{taps_string}: #{error_tap_paths.to_sentence}" if error_tap_paths.present?
+        return unless error_tap_paths.present?
+
+        Finding.new("Unable to read from cask #{taps_string}: #{error_tap_paths.to_sentence}")
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_cask_load_path
         paths = $LOAD_PATH.map { user_tilde(it) }
 
         add_info "$LOAD_PATHS", paths.presence || none_string
 
-        "$LOAD_PATH is empty" if paths.blank?
+        Finding.new("$LOAD_PATH is empty") if paths.blank?
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_cask_environment_variables
         environment_variables = %w[
           RUBYLIB
@@ -1083,11 +1467,11 @@ module Homebrew
         nil
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_cask_xattr
         # If quarantine is not available, a warning is already shown by check_cask_quarantine_support so just return
         return unless Cask::Quarantine.available?
-        return "Unable to find `xattr`." unless File.exist?("/usr/bin/xattr")
+        return Finding.new("Unable to find `xattr`.") unless File.exist?("/usr/bin/xattr")
 
         result = system_command "/usr/bin/xattr", args: ["-h"]
 
@@ -1097,22 +1481,30 @@ module Homebrew
           result = Utils.popen_read "/usr/bin/python", "--version", err: :out
 
           if result.include? "Python 2.7"
-            <<~EOS
-              Your Python installation has a broken version of setuptools.
-              To fix, reinstall macOS or run:
-                sudo /usr/bin/python -m pip install -I setuptools
-            EOS
+            Finding.new(
+              <<~EOS,
+                Your Python installation has a broken version of setuptools.
+              EOS
+              remediation: <<~EOS,
+                To fix, reinstall macOS or run:
+                  sudo /usr/bin/python -m pip install -I setuptools
+              EOS
+            )
           else
-            <<~EOS
-              The system Python version is wrong.
-              To fix, run:
-                defaults write com.apple.versioner.python Version 2.7
-            EOS
+            Finding.new(
+              <<~EOS,
+                The system Python version is wrong.
+              EOS
+              remediation: <<~EOS,
+                To fix, run:
+                  defaults write com.apple.versioner.python Version 2.7
+              EOS
+            )
           end
         elsif result.stderr.include? "pkg_resources.DistributionNotFound"
-          "Your Python installation is unable to find `xattr`."
+          Finding.new("Your Python installation is unable to find `xattr`.")
         else
-          "unknown xattr error: #{result.stderr.split("\n").last}"
+          Finding.new("unknown xattr error: #{result.stderr.split("\n").last}")
         end
       end
 
@@ -1121,7 +1513,7 @@ module Homebrew
         @non_core_taps ||= Tap.installed.reject(&:core_tap?).reject(&:core_cask_tap?)
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_duplicate_formulae
         return if ENV["HOMEBREW_TEST_BOT"].present?
 
@@ -1133,23 +1525,25 @@ module Homebrew
         return if shadowed_formula_full_names.empty?
 
         installed_formula_tap_names = Formula.installed.filter_map(&:tap).uniq.reject(&:official?).map(&:name)
-        shadowed_formula_tap_names = shadowed_formula_full_names.map { |s| s.rpartition("/").first }.uniq
+        shadowed_formula_tap_names = shadowed_formula_full_names.filter_map { |s| Utils.tap_from_full_name(s) }.uniq
         unused_shadowed_formula_tap_names = (shadowed_formula_tap_names - installed_formula_tap_names).sort
 
-        resolution = if unused_shadowed_formula_tap_names.empty?
+        remediation = if unused_shadowed_formula_tap_names.empty?
           "Their taps are in use, so you must use these full names throughout Homebrew."
         else
           "Some of these can be resolved with:\n  brew untap #{unused_shadowed_formula_tap_names.join(" ")}"
         end
 
-        <<~EOS
-          The following formulae have the same name as core formulae:
-            #{shadowed_formula_full_names.join("\n  ")}
-          #{resolution}
-        EOS
+        Finding.new(
+          <<~EOS,
+            The following formulae have the same name as core formulae:
+              #{shadowed_formula_full_names.join("\n  ")}
+          EOS
+          remediation:,
+        )
       end
 
-      sig { returns(T.nilable(String)) }
+      sig { returns(T.nilable(Finding)) }
       def check_for_duplicate_casks
         return if ENV["HOMEBREW_TEST_BOT"].present?
 
@@ -1161,20 +1555,28 @@ module Homebrew
         return if shadowed_cask_full_names.empty?
 
         installed_cask_tap_names = Cask::Caskroom.casks.filter_map(&:tap).uniq.reject(&:official?).map(&:name)
-        shadowed_cask_tap_names = shadowed_cask_full_names.map { |s| s.rpartition("/").first }.uniq
+        shadowed_cask_tap_names = shadowed_cask_full_names.filter_map { |s| Utils.tap_from_full_name(s) }.uniq
         unused_shadowed_cask_tap_names = (shadowed_cask_tap_names - installed_cask_tap_names).sort
 
-        resolution = if unused_shadowed_cask_tap_names.empty?
-          "Their taps are in use, so you must use these full names throughout Homebrew."
+        remediation = if unused_shadowed_cask_tap_names.empty?
+          Finding::Remediation.new(
+            text: "Their taps are in use, so you must use these full names throughout Homebrew.",
+          )
         else
-          "Some of these can be resolved with:\n  brew untap #{unused_shadowed_cask_tap_names.join(" ")}"
+          Finding::Remediation.new(
+            text:     "Some of these can be resolved with:",
+            commands: ["brew untap #{unused_shadowed_cask_tap_names.join(" ")}"],
+          )
         end
 
-        <<~EOS
-          The following casks have the same name as core casks:
-            #{shadowed_cask_full_names.join("\n  ")}
-          #{resolution}
-        EOS
+        Finding.new(
+          <<~EOS,
+            The following casks have the same name as core casks:
+              #{shadowed_cask_full_names.join("\n  ")}
+          EOS
+          affects:     shadowed_cask_full_names,
+          remediation:,
+        )
       end
 
       sig { returns(T::Array[String]) }

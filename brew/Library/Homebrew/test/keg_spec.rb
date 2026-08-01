@@ -1,9 +1,15 @@
+# typed: true
 # frozen_string_literal: true
 
 require "keg"
 require "stringio"
 
 RSpec.describe Keg do
+  let(:dst) { HOMEBREW_PREFIX/"bin"/"helloworld" }
+  let(:nonexistent) { Pathname.new("/some/nonexistent/path") }
+  let!(:keg) { setup_test_keg("foo", "1.0") }
+  let(:kegs) { [] }
+
   include FileUtils
 
   def setup_test_keg(name, version)
@@ -14,15 +20,10 @@ RSpec.describe Keg do
       touch path/"bin"/file
     end
 
-    keg = described_class.new(path)
+    keg = Keg.new(path)
     kegs << keg
     keg
   end
-
-  let(:dst) { HOMEBREW_PREFIX/"bin"/"helloworld" }
-  let(:nonexistent) { Pathname.new("/some/nonexistent/path") }
-  let!(:keg) { setup_test_keg("foo", "1.0") }
-  let(:kegs) { [] }
 
   before do
     (HOMEBREW_PREFIX/"bin").mkpath
@@ -166,6 +167,20 @@ RSpec.describe Keg do
       expect(link.lstat).to be_a_directory
     end
 
+    specify "lib/cps directory is created" do
+      link = HOMEBREW_PREFIX/"lib"/"cps"
+      (keg/"lib"/"cps").mkpath
+      keg.link
+      expect(link.lstat).to be_a_directory
+    end
+
+    specify "share/cps directory is created" do
+      link = HOMEBREW_PREFIX/"share"/"cps"
+      (keg/"share"/"cps").mkpath
+      keg.link
+      expect(link.lstat).to be_a_directory
+    end
+
     specify "symlinks are linked directly" do
       link = HOMEBREW_PREFIX/"lib"/"pkgconfig"
 
@@ -269,8 +284,6 @@ RSpec.describe Keg do
       expect(lib.children.length).to eq(2)
     end
 
-    # This is a legacy violation that would benefit from a clear expectation.
-    # rubocop:disable RSpec/NoExpectationExample
     it "removes broken symlinks that conflict with directories" do
       a = HOMEBREW_CELLAR/"a"/"1.0"
       (a/"lib"/"foo").mkpath
@@ -282,8 +295,9 @@ RSpec.describe Keg do
       link.make_symlink(nonexistent)
 
       keg.link
+
+      expect(link).to be_a_directory
     end
-    # rubocop:enable RSpec/NoExpectationExample
   end
 
   describe "#optlink" do

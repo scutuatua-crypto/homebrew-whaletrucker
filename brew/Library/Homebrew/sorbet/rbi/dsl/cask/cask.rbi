@@ -10,6 +10,9 @@ class Cask::Cask
   def app(*args, &block); end
 
   sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
+  def app_image(*args, &block); end
+
+  sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
   def appdir(*args, &block); end
 
   sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
@@ -41,6 +44,9 @@ class Cask::Cask
 
   sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
   def colorpicker(*args, &block); end
+
+  sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
+  def command_wrapper(*args, &block); end
 
   sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
   def conflicts_with(*args, &block); end
@@ -109,7 +115,16 @@ class Cask::Cask
   def font(*args, &block); end
 
   sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
+  def generate_completions_from_executable(*args, &block); end
+
+  sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
+  def generated_script(*args, &block); end
+
+  sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
   def homepage(*args, &block); end
+
+  sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
+  def homepage_browsed(*args, &block); end
 
   sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
   def input_method(*args, &block); end
@@ -122,9 +137,6 @@ class Cask::Cask
 
   sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
   def keyboard_layout(*args, &block); end
-
-  sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
-  def language(*args, &block); end
 
   sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
   def livecheck(*args, &block); end
@@ -147,6 +159,9 @@ class Cask::Cask
   sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
   def no_autobump_message(*args, &block); end
 
+  sig { params(args: T.untyped, block: T.untyped).returns(T::Boolean) }
+  def on_os_blocks_exist?(*args, &block); end
+
   sig { params(args: T.untyped, block: T.untyped).returns(T.nilable(MacOSVersion)) }
   def on_system_block_min_os(*args, &block); end
 
@@ -163,7 +178,13 @@ class Cask::Cask
   def postflight(*args, &block); end
 
   sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
+  def postflight_steps(*args, &block); end
+
+  sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
   def preflight(*args, &block); end
+
+  sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
+  def preflight_steps(*args, &block); end
 
   sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
   def prefpane(*args, &block); end
@@ -199,7 +220,13 @@ class Cask::Cask
   def uninstall_postflight(*args, &block); end
 
   sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
+  def uninstall_postflight_steps(*args, &block); end
+
+  sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
   def uninstall_preflight(*args, &block); end
+
+  sig { params(args: T.untyped, block: T.untyped).returns(T.untyped) }
+  def uninstall_preflight_steps(*args, &block); end
 
   sig { params(args: T.untyped, block: T.untyped).returns(T.nilable(::Cask::URL)) }
   def url(*args, &block); end

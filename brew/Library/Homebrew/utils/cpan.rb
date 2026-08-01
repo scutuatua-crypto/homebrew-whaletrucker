@@ -1,7 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "utils/inreplace"
 require "utils/output"
 
 # Helper functions for updating CPAN resources.
@@ -86,17 +85,17 @@ module CPAN
     params(
       formula:       Formula,
       print_only:    T.nilable(T::Boolean),
-      silent:        T.nilable(T::Boolean),
+      quiet:         T.nilable(T::Boolean),
       verbose:       T.nilable(T::Boolean),
       ignore_errors: T.nilable(T::Boolean),
     ).returns(T.nilable(T::Boolean))
   }
-  def self.update_perl_resources!(formula, print_only: false, silent: false, verbose: false, ignore_errors: false)
+  def self.update_perl_resources!(formula, print_only: false, quiet: false, verbose: false, ignore_errors: false)
     cpan_resources = formula.resources.select { |resource| resource.url.start_with?(METACPAN_URL_PREFIX) }
 
     odie "\"#{formula.name}\" has no CPAN resources to update." if cpan_resources.empty?
 
-    show_info = !print_only && !silent
+    show_info = !print_only && !quiet
 
     non_cpan_resources = formula.resources.reject { |resource| resource.url.start_with?(METACPAN_URL_PREFIX) }
     ohai "Skipping #{non_cpan_resources.length} non-CPAN resources" if non_cpan_resources.any? && show_info
@@ -158,38 +157,22 @@ module CPAN
       return true
     end
 
-    if formula.resources.all? { |resource| resource.name.start_with?("homebrew-") }
-      inreplace_regex = /  def install/
-      resource_section += "  def install"
-    else
-      inreplace_regex = /
-        \ \ (
-        (\#\ RESOURCE-ERROR:\ .*\s+)*
-        resource\ .*\ do\s+
-          url\ .*\s+
-          sha256\ .*\s+
-          ((\#.*\s+)*
-          patch\ (.*\ )?do\s+
-            url\ .*\s+
-            sha256\ .*\s+
-          end\s+)*
-        end\s+)+
-      /x
-      resource_section += "  "
-    end
+    ohai "Updating resource blocks" unless quiet
+    require "utils/ast"
 
-    ohai "Updating resource blocks" unless silent
-    Utils::Inreplace.inreplace formula.path do |s|
-      if s.inreplace_string.split(/^  test do\b/, 2).fetch(0).scan(inreplace_regex).length > 1
-        odie "Unable to update resource blocks for \"#{formula.name}\" automatically. Please update them manually."
-      end
-      s.sub! inreplace_regex, resource_section
+    formula_ast = Utils::AST::FormulaAST.new(formula.path.read)
+    if formula_ast.replace_resource_stanzas(
+      resource_section,
+      replace_existing: formula.resources.any? { |resource| !resource.name.start_with?("homebrew-") },
+    ) == :multiple_groups
+      odie "Unable to update resource blocks for \"#{formula.name}\" automatically. Please update them manually."
     end
+    formula.path.atomic_write(formula_ast.process)
 
     if package_errors.present?
       ofail "Unable to resolve some dependencies. Please check #{formula.path} for RESOURCE-ERROR comments."
     elsif updated_count.positive?
-      ohai "Updated #{updated_count} CPAN resource#{"s" if updated_count != 1}" unless silent
+      ohai "Updated #{updated_count} CPAN resource#{"s" if updated_count != 1}" unless quiet
     end
 
     true

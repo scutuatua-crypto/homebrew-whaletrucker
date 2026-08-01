@@ -33,6 +33,8 @@ module Homebrew
                description: "Include pull requests that have failing status checks."
 
         named_args :none
+
+        hide_from_man_page!
       end
 
       sig { override.void }

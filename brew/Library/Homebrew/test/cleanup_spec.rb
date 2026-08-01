@@ -1,8 +1,11 @@
+# typed: false
 # frozen_string_literal: true
 
 require "test/support/fixtures/testball"
 require "cleanup"
+require "utils/autoremove"
 require "cask/cache"
+require "uninstall"
 require "fileutils"
 
 RSpec.describe Homebrew::Cleanup do
@@ -57,12 +60,34 @@ RSpec.describe Homebrew::Cleanup do
       expect(lock_file).to exist
     end
 
+    it "removes leftover `.reinstall` kegs in the Cellar" do
+      reinstall_keg = HOMEBREW_CELLAR/"foo/1.0.reinstall"
+      reinstall_keg.mkpath
+
+      cleanup.clean!
+
+      expect(reinstall_keg).not_to exist
+    end
+
     it "doesn't remove the lock file if it is locked" do
       lock_file.open(File::RDWR | File::CREAT).flock(File::LOCK_EX | File::LOCK_NB)
 
       cleanup.clean!
 
       expect(lock_file).to exist
+    end
+
+    it "doesn't load untrusted installed formulae while cleaning the cache" do
+      cache_file = HOMEBREW_CACHE/"untrusted--1.0"
+      cache_file.write "cached"
+      (HOMEBREW_CELLAR/"untrusted/1.0").mkpath
+
+      expect(Formulary).to receive(:from_rack).with(HOMEBREW_CELLAR/"untrusted")
+                                              .and_raise(Homebrew::UntrustedTapError)
+
+      expect { cleanup.cleanup_cache([{ path: cache_file, type: nil }]) }
+        .to output(/Skipping untrusted: tap formula is not trusted/).to_stderr
+      expect(cache_file).to exist
     end
 
     context "when it can't remove a keg" do
@@ -92,6 +117,31 @@ RSpec.describe Homebrew::Cleanup do
         cleanup.cleanup_formula formula_zero_dot_two
         expect(cleanup.unremovable_kegs).to contain_exactly(formula_zero_dot_one.installed_kegs[0])
       end
+    end
+  end
+
+  describe "::autoremove" do
+    let(:removable_keg) { instance_double(Keg, name: "libthai") }
+    let(:removable_formula) do
+      instance_double(Formula, name: "libthai", full_name: "libthai", any_installed_keg: removable_keg)
+    end
+
+    before do
+      allow(Formula).to receive(:clear_cache)
+      allow(Formula).to receive(:installed).and_return([removable_formula])
+      allow(Cask::Caskroom).to receive(:casks).and_return([])
+      allow(Homebrew::EnvConfig).to receive(:no_cleanup_formulae).and_return([])
+      allow(Utils::Autoremove).to receive(:removable_formulae).with([removable_formula],
+                                                                    []).and_return([removable_formula])
+      allow(InstalledDependents).to receive(:find_some_installed_dependents)
+        .with([removable_keg])
+        .and_return([[removable_keg], ["pango"]])
+    end
+
+    it "does not print or uninstall formulae required by installed dependents" do
+      expect(Homebrew::Uninstall).not_to receive(:uninstall_kegs)
+
+      expect { described_class.autoremove }.not_to output.to_stdout
     end
   end
 
@@ -238,9 +288,49 @@ RSpec.describe Homebrew::Cleanup do
         expect(download).not_to exist
       end
 
+      it "removes legacy URL-basename downloads if they are not for the latest version" do
+        download = Cask::Cache.path/"transmission-2.61.dmg--7.8.9.dmg"
+
+        FileUtils.touch download
+
+        cleanup.cleanup_cask(cask)
+
+        expect(download).not_to exist
+      end
+
       it "does not remove downloads for the latest version" do
         download = Cask::Cache.path/"#{cask.token}--#{cask.version}"
 
+        FileUtils.touch download
+
+        cleanup.cleanup_cask(cask)
+
+        expect(download).to exist
+      end
+
+      it "removes legacy URL-basename downloads when the token-named download exists" do
+        legacy_download = Cask::Cache.path/"transmission-2.61.dmg--#{cask.version}.dmg"
+        download = Cask::Cache.path/"#{cask.token}--#{cask.version}.dmg"
+
+        FileUtils.touch legacy_download
+        FileUtils.touch download
+
+        cleanup.cleanup_cask(cask)
+
+        expect([legacy_download.exist?, download.exist?]).to eq([false, true])
+      end
+
+      it "does not remove downloads when the latest version ends with a comma" do
+        version = Cask::DSL::Version.new("7.2,2023.3,")
+        cask = instance_double(Cask::Cask,
+                               token:             "trailing-comma",
+                               version:,
+                               installed_version: version,
+                               url:               nil,
+                               caskroom_path:     Cask::Caskroom.path/"trailing-comma")
+        download = Cask::Cache.path/"#{cask.token}--#{cask.version}.zip"
+
+        allow(Cask::CaskLoader).to receive(:load).with(cask.token, warn: false).and_return(cask)
         FileUtils.touch download
 
         cleanup.cleanup_cask(cask)
@@ -272,11 +362,27 @@ RSpec.describe Homebrew::Cleanup do
 
         expect(download).not_to exist
       end
+
+      it "removes broken legacy URL-basename downloads" do
+        version = Cask::DSL::Version.new(:latest)
+        cask = instance_double(Cask::Cask,
+                               token:         "latest-cask",
+                               version:,
+                               url:           "file://#{TEST_FIXTURE_DIR}/cask/caffeine.zip",
+                               caskroom_path: Cask::Caskroom.path/"latest-cask")
+        download = Cask::Cache.path/"caffeine.zip--#{version}.zip"
+
+        FileUtils.ln_s Cask::Cache.path/"missing.zip", download
+
+        cleanup.cleanup_cask(cask)
+
+        expect(download).not_to be_a_symlink
+      end
     end
   end
 
   describe "::cleanup_logs" do
-    let(:path) { (HOMEBREW_LOGS/"delete_me") }
+    let(:path) { HOMEBREW_LOGS/"delete_me" }
 
     before do
       path.mkpath
@@ -303,6 +409,19 @@ RSpec.describe Homebrew::Cleanup do
   end
 
   describe "::cleanup_cache" do
+    it "removes legacy cask downloads during full cache cleanup", :cask do
+      cask = Cask::CaskLoader.load("local-transmission")
+      download = Cask::Cache.path/"transmission-2.61.dmg--7.8.9.dmg"
+
+      Cask::Cache.path.mkpath
+      FileUtils.touch download
+      allow(Cask::Caskroom).to receive(:casks).and_return([cask])
+
+      cleanup.cleanup_cache
+
+      expect(download).not_to exist
+    end
+
     it "cleans up incomplete downloads" do
       incomplete = (HOMEBREW_CACHE/"something.incomplete")
       incomplete.mkpath
@@ -407,10 +526,122 @@ RSpec.describe Homebrew::Cleanup do
       expect(foo).to exist
     end
 
+    it "does not clean up internal package API files without scrub even when pruning" do
+      api_package_files = [
+        HOMEBREW_CACHE/"api/internal/packages.arm64_golden_gate.jws.json",
+        HOMEBREW_CACHE/"api/internal/packages.arm64_tahoe.jws.json",
+      ]
+      api_package_files.each do |api_package_file|
+        api_package_file.dirname.mkpath
+        FileUtils.touch api_package_file
+      end
+
+      described_class.new(days: 0).cleanup_cache
+
+      expect(api_package_files.map(&:exist?)).to eq([true, true])
+    end
+
+    it "cleans up non-current internal package API files with scrub" do
+      cache = mktmpdir/"cache"
+      api_internal = cache/"api/internal"
+      current_api_package_file = api_internal/Homebrew::API::Internal.cached_packages_json_file_path.basename
+      stale_api_package_file = api_internal/"packages.stale.jws.json"
+      api_package_files = [current_api_package_file, stale_api_package_file]
+      api_jws_files = [
+        cache/"api/formula.jws.json",
+        cache/"api/cask.jws.json",
+      ]
+      api_package_files.each do |api_package_file|
+        api_package_file.dirname.mkpath
+        FileUtils.touch api_package_file
+      end
+      api_jws_files.each do |api_jws_file|
+        api_jws_file.dirname.mkpath
+        FileUtils.touch api_jws_file
+      end
+
+      described_class.new(scrub: true, cache:).cleanup_cache
+
+      expect([*api_package_files, *api_jws_files].map(&:exist?)).to eq([true, false, true, true])
+    end
+
+    it "cleans up non-current internal package API payload sidecars with scrub" do
+      cache = mktmpdir/"cache"
+      api_internal = cache/"api/internal"
+      current_basename = Homebrew::API::Internal.cached_packages_json_file_path.basename
+      kept_files = [
+        api_internal/current_basename,
+        api_internal/"#{current_basename}.payload",
+      ]
+      scrubbed_files = [
+        api_internal/"packages.stale.jws.json.payload",
+        api_internal/"#{current_basename}.payload.tmp",
+      ]
+      (kept_files + scrubbed_files).each do |file|
+        file.dirname.mkpath
+        FileUtils.touch file
+      end
+
+      described_class.new(scrub: true, cache:).cleanup_cache
+
+      expect((kept_files + scrubbed_files).map(&:exist?)).to eq([true, true, false, false])
+    end
+
+    it "cleans up API source files and symlinks at any depth without cleaning directories" do
+      root_file = HOMEBREW_CACHE/"api-source/Homebrew/homebrew-core/abc123/README.md"
+      nested_file = HOMEBREW_CACHE/"api-source/Homebrew/homebrew-core/abc123/Formula/a/testball.rb"
+      nested_symlink = HOMEBREW_CACHE/"api-source/Homebrew/homebrew-core/abc123/patches/subdir/noop-a.diff"
+      nested_directory = HOMEBREW_CACHE/"api-source/Homebrew/homebrew-core/abc123/patches/keep"
+      symlink_target = mktmpdir/"noop-a.diff"
+
+      root_file.dirname.mkpath
+      nested_file.dirname.mkpath
+      nested_symlink.dirname.mkpath
+      nested_directory.mkpath
+      FileUtils.touch root_file
+      FileUtils.touch nested_file
+      FileUtils.touch symlink_target
+      FileUtils.ln_s symlink_target, nested_symlink
+
+      described_class.new(days: 0).cleanup_cache
+
+      expect([root_file.exist?, nested_file.exist?, nested_symlink.exist?, nested_directory.exist?])
+        .to eq([false, false, false, true])
+    end
+
+    it "does not remove recent API source local patches as stale" do
+      patch_file = HOMEBREW_CACHE/"api-source/Homebrew/homebrew-core/abc123/patches/noop-a.diff"
+      nested_patch_file = HOMEBREW_CACHE/"api-source/Homebrew/homebrew-core/abc123/patches/subdir/noop-b.diff"
+      patch_file.dirname.mkpath
+      nested_patch_file.dirname.mkpath
+      FileUtils.touch patch_file
+      FileUtils.touch nested_patch_file
+
+      cleanup.cleanup_cache
+
+      expect([patch_file.exist?, nested_patch_file.exist?]).to eq([true, true])
+    end
+
+    it "keeps current API formula source paths when tap git head matches" do
+      source_file = HOMEBREW_CACHE/"api-source/Homebrew/homebrew-core/abc123/Formula/testball.rb"
+      nested_source_file = HOMEBREW_CACHE/"api-source/Homebrew/homebrew-core/abc123/Formula/a/testball.rb"
+      package = instance_double(Formula, tap_git_head: "abc123")
+      source_file.dirname.mkpath
+      nested_source_file.dirname.mkpath
+      FileUtils.touch source_file
+      FileUtils.touch nested_source_file
+      expect(Formulary).to receive(:factory).with("Homebrew/homebrew-core/testball").twice.and_return(package)
+
+      cleanup.cleanup_cache([{ path: source_file, type: :api_source },
+                             { path: nested_source_file, type: :api_source }])
+
+      expect([source_file.exist?, nested_source_file.exist?]).to eq([true, true])
+    end
+
     context "when cleaning old files in HOMEBREW_CACHE" do
-      let(:bottle) { (HOMEBREW_CACHE/"testball--0.0.1.tag.bottle.tar.gz") }
-      let(:testball) { (HOMEBREW_CACHE/"testball--0.0.1") }
-      let(:testball_resource) { (HOMEBREW_CACHE/"testball--rsrc--0.0.1.txt") }
+      let(:bottle) { HOMEBREW_CACHE/"testball--0.0.1.tag.bottle.tar.gz" }
+      let(:testball) { HOMEBREW_CACHE/"testball--0.0.1" }
+      let(:testball_resource) { HOMEBREW_CACHE/"testball--rsrc--0.0.1.txt" }
 
       before do
         FileUtils.touch bottle
@@ -444,13 +675,60 @@ RSpec.describe Homebrew::Cleanup do
         expect(testball_resource).not_to exist
       end
     end
+
+    context "when the cache path is a bottle manifest file" do
+      let(:bottle_manifest_path) { HOMEBREW_CACHE/"testball_bottle_manifest--1.0.bottle_manifest.json" }
+
+      before do
+        HOMEBREW_CACHE.mkpath
+        FileUtils.touch bottle_manifest_path
+        (HOMEBREW_CELLAR/"testball"/"0.1/bin").mkpath
+        FileUtils.touch(CoreTap.instance.new_formula_path("testball"))
+      end
+
+      it "does not remove the file when bottle resource version is nil" do
+        allow(Formulary).to receive(:from_rack).with(HOMEBREW_CELLAR/"testball_bottle_manifest").and_return(nil)
+        allow(Formulary).to receive(:from_rack).and_call_original
+        allow(Formulary).to receive(:from_rack).with(HOMEBREW_CELLAR/"testball").and_wrap_original do |m, *args|
+          formula = m.call(*args)
+          if formula
+            bottle_nil_version = instance_double(Bottle,
+                                                 resource: instance_double(Resource, version: nil),
+                                                 rebuild:  0)
+            allow(formula).to receive(:bottle).and_return(bottle_nil_version)
+          end
+          formula
+        end
+        cleanup.cleanup_cache([{ path: bottle_manifest_path, type: nil }])
+        expect(bottle_manifest_path).to exist
+      end
+
+      it "removes the file when path version differs from bottle version_rebuild" do
+        pathname_mismatch = (HOMEBREW_CACHE/"testball_bottle_manifest--2.0.bottle_manifest.json")
+        FileUtils.touch pathname_mismatch
+        allow(Formulary).to receive(:from_rack).with(HOMEBREW_CELLAR/"testball_bottle_manifest").and_return(nil)
+        allow(Formulary).to receive(:from_rack).and_call_original
+        allow(Formulary).to receive(:from_rack).with(HOMEBREW_CELLAR/"testball").and_wrap_original do |m, *args|
+          formula = m.call(*args)
+          if formula
+            bottle_double = instance_double(Bottle,
+                                            resource: instance_double(Resource, version: Version.new("1.0")),
+                                            rebuild:  0)
+            allow(formula).to receive(:bottle).and_return(bottle_double)
+          end
+          formula
+        end
+        cleanup.cleanup_cache([{ path: pathname_mismatch, type: nil }])
+        expect(pathname_mismatch).not_to exist
+      end
+    end
   end
 
   describe "::cleanup_python_site_packages" do
     context "when cleaning up Python modules" do
-      let(:foo_module) { (HOMEBREW_PREFIX/"lib/python3.99/site-packages/foo") }
-      let(:foo_pycache) { (foo_module/"__pycache__") }
-      let(:foo_pyc) { (foo_pycache/"foo.cypthon-399.pyc") }
+      let(:foo_module) { HOMEBREW_PREFIX/"lib/python3.99/site-packages/foo" }
+      let(:foo_pycache) { foo_module/"__pycache__" }
+      let(:foo_pyc) { foo_pycache/"foo.cypthon-399.pyc" }
 
       before do
         foo_pycache.mkpath

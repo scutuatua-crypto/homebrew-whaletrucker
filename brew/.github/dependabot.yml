@@ -4,6 +4,7 @@ version: 2
 updates:
 - package-ecosystem: bundler
   directories:
+  - "/docs"
   - "/Library/Homebrew"
   schedule:
     interval: weekly
@@ -49,7 +50,8 @@ updates:
   cooldown:
     default-days: 7
 - package-ecosystem: github-actions
-  directory: "/"
+  directories:
+  - "/"
   schedule:
     interval: weekly
     day: friday
@@ -63,7 +65,7 @@ updates:
   - dependency-type: all
   cooldown:
     default-days: 7
-- package-ecosystem: pip
+- package-ecosystem: uv
   directories:
   - "/Library/Homebrew/formula-analytics/"
   schedule:
@@ -72,7 +74,7 @@ updates:
     time: '08:00'
     timezone: Etc/UTC
   groups:
-    pip:
+    uv:
       patterns:
       - "*"
   allow:

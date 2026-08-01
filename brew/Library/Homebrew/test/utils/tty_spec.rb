@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 RSpec.describe Tty do
@@ -7,12 +8,41 @@ RSpec.describe Tty do
     end
   end
 
-  describe "::width" do
-    it "returns an Integer" do
-      expect(described_class.width).to be_a(Integer)
+  describe "::collapse_carriage_returns" do
+    it "keeps only the final segment of a carriage-return-delimited progress bar" do
+      expect(described_class.collapse_carriage_returns("#\r##\r### 100%")).to eq("### 100%")
     end
 
-    it "cannot be negative" do # rubocop:todo RSpec/AggregateExamples
+    it "collapses carriage returns independently on each real line" do
+      expect(described_class.collapse_carriage_returns("a\rb\nc\rd")).to eq("b\nd")
+    end
+
+    it "returns the string unchanged when it has no carriage returns" do
+      expect(described_class.collapse_carriage_returns("curl: (7) Couldn't connect to server")).to(
+        eq("curl: (7) Couldn't connect to server"),
+      )
+    end
+
+    it "keeps the last written content when the string ends with a trailing carriage return" do
+      expect(described_class.collapse_carriage_returns("### 50%\r")).to eq("### 50%")
+    end
+  end
+
+  describe "::begin_synchronized_update" do
+    it "returns the DEC private mode 2026 set sequence" do
+      expect(described_class.begin_synchronized_update).to eq("\033[?2026h")
+    end
+  end
+
+  describe "::end_synchronized_update" do
+    it "returns the DEC private mode 2026 reset sequence" do
+      expect(described_class.end_synchronized_update).to eq("\033[?2026l")
+    end
+  end
+
+  describe "::width" do
+    specify do
+      expect(described_class.width).to be_a(Integer)
       expect(described_class.width).to be >= 0
     end
   end

@@ -1,17 +1,51 @@
+# typed: true
 # frozen_string_literal: true
 
 require "sandbox"
 
 RSpec.describe Sandbox, :needs_macos do
-  define_negated_matcher :not_matching, :matching
-
   subject(:sandbox) { described_class.new }
 
   let(:dir) { mktmpdir }
   let(:file) { dir/"foo" }
 
+  define_negated_matcher :not_matching, :matching
+
   before do
     skip "Sandbox not implemented." unless described_class.available?
+  end
+
+  describe ".avoid_nested_sandboxing?" do
+    before do
+      allow(Homebrew::EnvConfig).to receive(:avoid_nested_sandboxing?).and_return(true)
+      allow(described_class).to receive(:nested_sandbox?).and_return(true)
+      allow(Homebrew).to receive(:default_prefix?).and_return(false)
+      allow(Process).to receive(:groups).and_return([])
+    end
+
+    it "skips the sandbox for an unprivileged user in a custom prefix" do
+      expect(described_class.avoid_nested_sandboxing?).to be(true)
+    end
+
+    it "is false when not opted in via the environment" do
+      allow(Homebrew::EnvConfig).to receive(:avoid_nested_sandboxing?).and_return(false)
+      expect(described_class.avoid_nested_sandboxing?).to be(false)
+    end
+
+    it "is false when not running inside another sandbox" do
+      allow(described_class).to receive(:nested_sandbox?).and_return(false)
+      expect(described_class.avoid_nested_sandboxing?).to be(false)
+    end
+
+    it "errors out in the default prefix" do
+      allow(Homebrew).to receive(:default_prefix?).and_return(true)
+      expect { described_class.avoid_nested_sandboxing? }.to raise_error(SystemExit)
+    end
+
+    it "errors out for a user in a privileged group" do
+      allow(Process).to receive(:groups).and_return([Etc.getgrnam("staff")&.gid].compact)
+      expect { described_class.avoid_nested_sandboxing? }.to raise_error(SystemExit)
+    end
   end
 
   specify "#allow_write" do
@@ -21,48 +55,14 @@ RSpec.describe Sandbox, :needs_macos do
     expect(file).to exist
   end
 
-  describe "#path_filter" do
-    ["'", '"', "(", ")", "\n", "\\"].each do |char|
-      it "fails if the path contains #{char}" do
-        expect do
-          sandbox.path_filter("foo#{char}bar", :subpath)
-        end.to raise_error(ArgumentError)
-      end
-    end
-  end
+  it "writes to a path containing the seatbelt string delimiters \\ and \"" do
+    delimiter_dir = dir/"I:\\ and \"quote\""
+    delimiter_dir.mkpath
+    target = delimiter_dir/"foo"
+    sandbox.allow_write path: target
+    sandbox.run "touch", target
 
-  describe "#allow_write_cellar" do
-    it "fails when the formula has a name including )" do
-      f = formula do
-        url "https://brew.sh/foo-1.0.tar.gz"
-        version "1.0"
-
-        def initialize(*, **)
-          super
-          @name = "foo)bar"
-        end
-      end
-
-      expect do
-        sandbox.allow_write_cellar f
-      end.to raise_error(ArgumentError)
-    end
-
-    it "fails when the formula has a name including \"" do
-      f = formula do
-        url "https://brew.sh/foo-1.0.tar.gz"
-        version "1.0"
-
-        def initialize(*, **)
-          super
-          @name = "foo\"bar"
-        end
-      end
-
-      expect do
-        sandbox.allow_write_cellar f
-      end.to raise_error(ArgumentError)
-    end
+    expect(target).to exist
   end
 
   describe "#run" do
@@ -83,6 +83,15 @@ RSpec.describe Sandbox, :needs_macos do
       expect { sandbox.run "false" }
         .to raise_error(ErrorDuringExecution)
         .and output(/foo/).to_stdout
+    end
+
+    it "does not raise getcwd EPERM when the parent CWD is sandbox-denied" do
+      mktmpdir do |denied|
+        sandbox.deny_read_path(denied)
+        Dir.chdir(denied) do
+          expect { sandbox.run "/bin/pwd" }.not_to raise_error
+        end
+      end
     end
 
     it "ignores bogus Python error" do

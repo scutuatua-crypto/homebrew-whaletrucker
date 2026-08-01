@@ -19,24 +19,6 @@ module ELFPathname
 end
 
 BinaryPathname.singleton_class.prepend(ELFPathname::ClassMethods)
-
-module OS
-  module Linux
-    module Pathname
-      module ClassMethods
-        extend T::Helpers
-
-        requires_ancestor { T.class_of(::Pathname) }
-
-        sig { void }
-        def activate_extensions!
-          super
-
-          prepend(ELFShim)
-        end
-      end
-    end
-  end
-end
+require "extend/os/linux/extend/pathname/os"
 
 Pathname.singleton_class.prepend(OS::Linux::Pathname::ClassMethods)

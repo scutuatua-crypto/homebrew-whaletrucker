@@ -1,7 +1,9 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "utils"
 require "utils/output"
+require "utils/path"
 
 module Language
   # Helper functions for Python formulae.
@@ -86,28 +88,6 @@ module Language
       quiet_system python, "-c", script
     end
 
-    sig { params(prefix: Pathname, python: T.any(String, Pathname)).returns(T::Array[String]) }
-    def self.setup_install_args(prefix, python = "python3")
-      odeprecated "Language::Python.setup_install_args", "pip and `std_pip_args`"
-      shim = <<~PYTHON
-        import setuptools, tokenize
-        __file__ = 'setup.py'
-        exec(compile(getattr(tokenize, 'open', open)(__file__).read()
-          .replace('\\r\\n', '\\n'), __file__, 'exec'))
-      PYTHON
-      %W[
-        -c
-        #{shim}
-        --no-user-cfg
-        install
-        --prefix=#{prefix}
-        --install-scripts=#{prefix}/bin
-        --install-lib=#{prefix/site_packages(python)}
-        --single-version-externally-managed
-        --record=installed.txt
-      ]
-    end
-
     # Mixin module for {Formula} adding shebang rewrite features.
     module Shebang
       extend T::Helpers
@@ -144,7 +124,7 @@ module Language
           end
 
           python_dep = python_deps.first
-          Formula[python_dep].opt_bin/python_dep.sub("@", "")
+          Utils::Path.formula_opt_bin(python_dep)/python_dep.sub("@", "")
         end
 
         python_shebang_rewrite_info(python_path)
@@ -194,19 +174,21 @@ module Language
         # Find any Python bindings provided by recursive dependencies
         pth_contents = []
         formula.recursive_dependencies do |dependent, dep|
-          Dependency.prune if dep.build? || dep.test?
+          next Dependable::PRUNE if dep.build? || dep.test?
           # Apply default filter
-          Dependency.prune if (dep.optional? || dep.recommended?) && !dependent.build.with?(dep)
+          next Dependable::PRUNE if (dep.optional? || dep.recommended?) && !T.cast(dependent,
+                                                                                   Formula).build.with?(dep)
           # Do not add the main site-package provided by the brewed
           # Python formula, to keep the virtual-env's site-package pristine
-          Dependency.prune if python_names.include? dep.name
+          next Dependable::PRUNE if python_names.include? dep.name
           # Skip uses_from_macos dependencies as these imply no Python bindings
-          Dependency.prune if dep.uses_from_macos?
+          next Dependable::PRUNE if dep.uses_from_macos?
 
           dep_site_packages = dep.to_formula.opt_prefix/Language::Python.site_packages(python)
-          Dependency.prune unless dep_site_packages.exist?
+          next Dependable::PRUNE unless dep_site_packages.exist?
 
           pth_contents << "import site; site.addsitedir('#{dep_site_packages}')\n"
+          nil # Return nil to satisfy T.nilable(Symbol) block sig (Array from << would violate it).
         end
         (venv.site_packages/"homebrew_deps.pth").write pth_contents.join unless pth_contents.empty?
 
@@ -223,7 +205,7 @@ module Language
       def needs_python?(python)
         return true if build.with?(python)
 
-        (requirements.to_a | deps).any? { |r| r.name.split("/").last == python && r.required? }
+        (requirements.to_a | deps).any? { |r| Utils.name_from_full_name(r.name) == python && r.required? }
       end
 
       # Helper method for the common case of installing a Python application.
@@ -347,7 +329,7 @@ module Language
 
             new_target = rp.sub(
               %r{#{HOMEBREW_CELLAR}/python#{version}/[^/]+},
-              Formula["python#{version}"].opt_prefix.to_s,
+              Utils::Path.formula_opt_prefix("python#{version}").to_s,
             )
             f.unlink
             f.make_symlink new_target
@@ -361,7 +343,7 @@ module Language
 
             prefix_path.sub!(
               %r{^#{HOMEBREW_CELLAR}/python#{version}/[^/]+},
-              Formula["python#{version}"].opt_prefix.to_s,
+              Utils::Path.formula_opt_prefix("python#{version}").to_s,
             )
             prefix_file.atomic_write prefix_path
           end
@@ -373,7 +355,7 @@ module Language
             cfg = cfg_file.read
             framework = "Frameworks/Python.framework/Versions"
             cfg.match(%r{= *(#{HOMEBREW_CELLAR}/(python@[\d.]+)/[^/]+(?:/#{framework}/[\d.]+)?/bin)}) do |match|
-              cfg.sub! match[1].to_s, Formula[T.must(match[2])].opt_bin.to_s
+              cfg.sub! match[1].to_s, Utils::Path.formula_opt_bin(T.must(match[2])).to_s
               cfg_file.atomic_write cfg
             end
           end

@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "rubocops/rubocop-cask"
@@ -19,6 +20,16 @@ RSpec.describe RuboCop::Cop::Cask::NoOverrides, :config do
       cask 'foo' do
         on_sequoia :or_later do
           version :latest
+        end
+      end
+    CASK
+  end
+
+  it "accepts `depends_on macos:` in `on_macos` blocks" do
+    expect_no_offenses <<~CASK
+      cask 'foo' do
+        on_macos do
+          depends_on macos: :catalina
         end
       end
     CASK

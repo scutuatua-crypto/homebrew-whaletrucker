@@ -5,6 +5,7 @@ module OS
   module Linux
     module Superenv
       extend T::Helpers
+      include CompilerConstants
 
       requires_ancestor { SharedEnvExtension }
       requires_ancestor { ::Superenv }
@@ -12,7 +13,7 @@ module OS
       module ClassMethods
         sig { returns(::Pathname) }
         def shims_path
-          HOMEBREW_SHIMS_PATH/"linux/super"
+          HOMEBREW_SHIMS_PATH/"linux/super/bin"
         end
 
         sig { returns(T.nilable(::Pathname)) }
@@ -59,7 +60,7 @@ module OS
       def homebrew_extra_paths
         paths = super
         paths += %w[binutils make].filter_map do |f|
-          bin = Formulary.factory(f).opt_bin
+          bin = ::Formula[f].opt_bin
           bin if bin.directory?
         rescue FormulaUnavailableError
           nil
@@ -95,6 +96,15 @@ module OS
         return unless File.readable? path
 
         path
+      end
+
+      GNU_GCC_VERSIONS.each do |n|
+        define_method("gcc-#{n}") do
+          T.bind(self, OS::Linux::Superenv)
+          super()
+          self["CC"] = self["OBJC"] = "gcc"
+          self["CXX"] = self["OBJCXX"] = "g++"
+        end
       end
     end
   end

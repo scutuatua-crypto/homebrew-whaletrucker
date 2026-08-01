@@ -2,9 +2,12 @@
 # frozen_string_literal: true
 
 require "tab"
+require "utils/topological_hash"
 
 module Cask
   class Tab < ::AbstractTab
+    Cache = type_template { { fixed: T::Hash[T.any(Pathname, String), T.untyped] } }
+
     sig { returns(T.nilable(T::Boolean)) }
     attr_accessor :uninstall_flight_blocks
 
@@ -68,9 +71,9 @@ module Cask
     sig { params(cask: Cask).returns(T::Hash[Symbol, T::Array[T::Hash[String, T.untyped]]]) }
     def self.runtime_deps_hash(cask)
       cask_and_formula_dep_graph = ::Utils::TopologicalHash.graph_package_dependencies(cask)
-      cask_deps, formula_deps = cask_and_formula_dep_graph.values.flatten.uniq.partition do |dep|
+      cask_deps, formula_deps = T.cast(cask_and_formula_dep_graph.values.flatten.uniq.partition do |dep|
         dep.is_a?(Cask)
-      end
+      end, [T::Array[Cask], T::Array[Formula]])
 
       runtime_deps = {}
 
@@ -101,17 +104,17 @@ module Cask
     sig { params(_args: T.untyped).returns(String) }
     def to_json(*_args)
       attributes = {
-        "homebrew_version"        => homebrew_version,
-        "loaded_from_api"         => loaded_from_api,
-        "uninstall_flight_blocks" => uninstall_flight_blocks,
-        "installed_as_dependency" => installed_as_dependency,
-        "installed_on_request"    => installed_on_request,
-        "time"                    => time,
-        "runtime_dependencies"    => runtime_dependencies,
-        "source"                  => source,
-        "arch"                    => arch,
-        "uninstall_artifacts"     => uninstall_artifacts,
-        "built_on"                => built_on,
+        "homebrew_version"         => homebrew_version,
+        "loaded_from_api"          => loaded_from_api,
+        "loaded_from_internal_api" => loaded_from_internal_api,
+        "uninstall_flight_blocks"  => uninstall_flight_blocks,
+        "installed_on_request"     => installed_on_request,
+        "time"                     => time,
+        "runtime_dependencies"     => runtime_dependencies,
+        "source"                   => source,
+        "arch"                     => arch,
+        "uninstall_artifacts"      => uninstall_artifacts,
+        "built_on"                 => built_on,
       }
 
       JSON.pretty_generate(attributes)
@@ -120,8 +123,14 @@ module Cask
     sig { returns(String) }
     def to_s
       s = ["Installed"]
-      s << "using the formulae.brew.sh API" if loaded_from_api
-      s << Time.at(time).strftime("on %Y-%m-%d at %H:%M:%S") if time
+      if loaded_from_internal_api
+        s << "using the internal formulae.brew.sh API"
+      elsif loaded_from_api
+        s << "using the formulae.brew.sh API"
+      end
+      if (t = time)
+        s << Time.at(t).strftime("on %Y-%m-%d at %H:%M:%S")
+      end
       s.join(" ")
     end
   end

@@ -29,6 +29,8 @@ module Homebrew
                description: "Target workflow filename (default: `publish-commit-bottles.yml`)."
 
         named_args :pull_request, min: 1
+
+        hide_from_man_page!
       end
 
       sig { override.void }
@@ -47,7 +49,7 @@ module Homebrew
           arg = "#{tap.default_remote}/pull/#{arg}" if arg.to_i.positive?
           url_match = arg.match HOMEBREW_PULL_OR_COMMIT_URL_REGEX
           _, user, repo, issue = *url_match
-          odie "Not a GitHub pull request: #{arg}" unless issue
+          odie "Not a GitHub pull request: #{arg}" if !user || !repo || !issue
 
           inputs[:pull_request] = issue
 

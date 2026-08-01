@@ -79,7 +79,7 @@ module Utils
     sig { params(variable: String, value: String).returns(T.nilable(String)) }
     def set_variable_in_profile(variable, value)
       case preferred
-      when :bash, :ksh, :sh, :zsh, nil
+      when :bash, :ksh, :mksh, :sh, :zsh, nil
         "echo 'export #{variable}=#{sh_quote(value)}' >> #{profile}"
       when :pwsh
         "$env:#{variable}='#{value}' >> #{profile}"
@@ -134,7 +134,7 @@ module Utils
 
       str = str.dup
       # Anything that isn't a known safe character is padded.
-      str.gsub!(UNSAFE_SHELL_CHAR, "\\\\" + "\\1") # rubocop:disable Style/StringConcatenation
+      str.gsub!(UNSAFE_SHELL_CHAR, '\\\\\\1')
       # Newlines have to be specially quoted in `csh`.
       str.gsub!("\n", "'\\\n'")
       str
@@ -148,7 +148,7 @@ module Utils
 
       str = str.dup
       # Anything that isn't a known safe character is padded.
-      str.gsub!(UNSAFE_SHELL_CHAR, "\\\\" + "\\1") # rubocop:disable Style/StringConcatenation
+      str.gsub!(UNSAFE_SHELL_CHAR, '\\\\\\1')
       str.gsub!("\n", "'\n'")
       str
     end

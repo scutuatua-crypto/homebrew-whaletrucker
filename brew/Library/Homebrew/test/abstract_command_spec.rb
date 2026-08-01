@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "abstract_command"
@@ -5,7 +6,7 @@ require "abstract_command"
 RSpec.describe Homebrew::AbstractCommand do
   describe "subclasses" do
     before do
-      test_cat = Class.new(described_class) do
+      test_cat = Class.new(Homebrew::AbstractCommand) do
         cmd_args do
           description "test"
           switch "--foo"
@@ -46,7 +47,7 @@ RSpec.describe Homebrew::AbstractCommand do
 
       describe "when command name is overridden" do
         before do
-          tac = Class.new(described_class) do
+          tac = Class.new(Homebrew::AbstractCommand) do
             def self.command_name = "t-a-c"
             def run; end
           end

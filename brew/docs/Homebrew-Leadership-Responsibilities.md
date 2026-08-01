@@ -4,7 +4,7 @@ last_review_date: "2025-11-26"
 
 # Homebrew Leadership Responsibilities
 
-## Project Leader Sole Responsibilities
+## Project Leader sole responsibilities
 
 - manage all day-to-day technical decisions
 - resolve disputes related to the operation of Homebrew between maintainers, other contributors, and users
@@ -12,11 +12,11 @@ last_review_date: "2025-11-26"
 - each quarter: checking for activity of maintainers and asking them to step down if they have not been active enough in the past quarters
 - organising the AGM (with delegation of tasks to other maintainers)
 
-## Lead Maintainers Sole Responsibilities
+## Lead Maintainers' sole responsibilities
 
 - decide on technical disputes between Homebrew maintainers and the Project Leader
 
-## Project Leader and Lead Maintainers Shared Responsibilities
+## Project Leader and Lead Maintainers' shared responsibilities
 
 - blocking abusive GitHub users
 - approving Open Collective expenses that are expected or have already been agreed upon by the Lead Maintainers (e.g. Homebrew cloud usage on a personal credit card) (only one approval needed)

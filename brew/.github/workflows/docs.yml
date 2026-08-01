@@ -27,17 +27,18 @@ jobs:
     steps:
       - name: Set up Homebrew
         id: set-up-homebrew
-        uses: Homebrew/actions/setup-homebrew@main
+        uses: Homebrew/actions/setup-homebrew@df4b09108a1de9d6f995fe68f302b3f68bd6d2ef # 2026.07.20.1
         with:
           core: false
           cask: false
+          stable: false
 
       - name: Checkout repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install vale
+      - name: Install Vale
         run: brew install vale
 
       - name: Cleanup Homebrew/brew docs
@@ -52,10 +53,11 @@ jobs:
       - name: Run Vale
         run: vale docs/
 
-      - name: Install Ruby
-        uses: ruby/setup-ruby@f8d7259c7a66155a7c4a157a1a10ca601f186594 # v1.271.0
+      - name: Setup Ruby
+        uses: Homebrew/actions/setup-ruby@df4b09108a1de9d6f995fe68f302b3f68bd6d2ef # 2026.07.20.1
         with:
           bundler-cache: true
+          portable-ruby: true
           working-directory: docs
 
       - name: Check Markdown syntax
@@ -71,27 +73,28 @@ jobs:
         run: ../script/generate-api-samples.rb --template
 
       - name: Cache HTML Proofer
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb # v5.0.1
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: tmp/.htmlproofer
           key: ${{ runner.os }}-htmlproofer
 
-      - name: Build the site without YARD and check for broken links
+      - name: Build the site
         working-directory: docs
-        run: bundle exec rake build test
-        env:
-          JEKYLL_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bundle exec rake build
+
+      - name: Check for broken links
+        if: github.event_name == 'pull_request'
+        working-directory: docs
+        run: bundle exec rake test || bundle exec rake test
 
       - name: Rebuild the site with YARD
         if: github.repository == 'Homebrew/brew'
         working-directory: docs
         run: bundle exec rake yard build
-        env:
-          JEKYLL_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload pages artifact
         if: github.repository == 'Homebrew/brew'
-        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: docs/_site/
 
@@ -111,7 +114,7 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
 
   deploy-issue:
     name: Open/close deploy issue
@@ -125,7 +128,7 @@ jobs:
       issues: write # for Homebrew/actions/create-or-update-issue
     steps:
       - name: Open, update, or close deploy issue
-        uses: Homebrew/actions/create-or-update-issue@main
+        uses: Homebrew/actions/create-or-update-issue@df4b09108a1de9d6f995fe68f302b3f68bd6d2ef # 2026.07.20.1
         with:
           token: ${{ github.token }}
           repository: ${{ github.repository }}

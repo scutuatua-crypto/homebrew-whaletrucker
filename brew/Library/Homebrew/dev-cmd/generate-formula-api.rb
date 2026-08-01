@@ -2,8 +2,11 @@
 # frozen_string_literal: true
 
 require "abstract_command"
+require "api"
+require "executables_db"
 require "fileutils"
 require "formula"
+require "vulns/advisory_database"
 
 module Homebrew
   module DevCmd
@@ -24,6 +27,8 @@ module Homebrew
                description: "Generate API data without writing it to files."
 
         named_args :none
+
+        hide_from_man_page!
       end
 
       sig { override.void }
@@ -36,6 +41,16 @@ module Homebrew
           FileUtils.rm_rf directories + ["_data/formula_canonical.json"]
           FileUtils.mkdir_p directories
         end
+
+        executables_path = Pathname("api/internal/executables.txt")
+        # Use the existing executables database as the API generation source.
+        # It is generated from GitHub Packages metadata, not generated API JSON.
+        if !args.dry_run? &&
+           !Homebrew::API.download_executables_file_from_github_packages!(executables_path)
+          odie "Failed to download #{executables_path}"
+        end
+        executables = ExecutablesDB.new(executables_path.to_s).to_hash
+        advisories = load_advisory_database
 
         Homebrew.with_no_api_env do
           tap_migrations_json = JSON.dump(tap.tap_migrations)
@@ -51,6 +66,10 @@ module Homebrew
               formula = Formulary.factory(name)
               name = formula.name
               all_formulae[name] = formula.to_hash_with_variations
+              all_formulae[name]["executables"] = executables[name] if executables.key?(name)
+              if (vulns = advisories&.status_for(name, formula.pkg_version))
+                all_formulae[name]["vulnerabilities"] = vulns
+              end
               json = JSON.pretty_generate(all_formulae[name])
               html_template_name = html_template(name)
 
@@ -69,62 +88,18 @@ module Homebrew
           File.write("_data/formula_canonical.json", "#{canonical_json}\n") unless args.dry_run?
 
           OnSystem::VALID_OS_ARCH_TAGS.each do |bottle_tag|
-            macos_version = bottle_tag.to_macos_version if bottle_tag.macos?
-
-            aliases = {}
-            renames = {}
-            variation_formulae = all_formulae.to_h do |name, formula|
-              formula = Homebrew::API.merge_variations(formula, bottle_tag:)
-
-              formula["aliases"]&.each do |alias_name|
-                aliases[alias_name] = name
-              end
-
-              formula["oldnames"]&.each do |oldname|
-                renames[oldname] = name
-              end
-
-              version = Version.new(formula.dig("versions", "stable"))
-              pkg_version = PkgVersion.new(version, formula["revision"])
-              version_scheme = formula.fetch("version_scheme", 0)
-              rebuild = formula.dig("bottle", "stable", "rebuild") || 0
-
-              bottle_collector = Utils::Bottles::Collector.new
-              formula.dig("bottle", "stable", "files")&.each do |tag, data|
-                tag = Utils::Bottles::Tag.from_symbol(tag)
-                bottle_collector.add tag, checksum: Checksum.new(data["sha256"]), cellar: :any
-              end
-
-              sha256 = bottle_collector.specification_for(bottle_tag)&.checksum&.to_s
-
-              dependencies = Set.new(formula["dependencies"])
-
-              if macos_version
-                uses_from_macos = formula["uses_from_macos"].zip(formula["uses_from_macos_bounds"])
-                dependencies += uses_from_macos.filter_map do |dep, bounds|
-                  next if bounds.blank?
-
-                  since = bounds[:since]
-                  next if since.blank?
-
-                  since_macos_version = MacOSVersion.from_symbol(since)
-                  next if since_macos_version <= macos_version
-
-                  dep
-                end
-              else
-                dependencies += formula["uses_from_macos"]
-              end
-
-              [name, [pkg_version.to_s, version_scheme, rebuild, sha256, dependencies.to_a]]
+            formulae = all_formulae.to_h do |name, hash|
+              hash = Homebrew::API::Formula::FormulaStructGenerator.generate_formula_struct_hash(hash, bottle_tag:)
+                                                                   .serialize(bottle_tag:)
+              [name, hash]
             end
 
             json_contents = {
-              formulae:       variation_formulae,
-              casks:          [],
-              aliases:        aliases,
-              renames:        renames,
-              tap_migrations: CoreTap.instance.tap_migrations,
+              formulae:,
+              aliases:        tap.alias_table,
+              renames:        tap.formula_renames,
+              tap_git_head:   tap.git_head,
+              tap_migrations: tap.tap_migrations,
             }
 
             File.write("api/internal/formula.#{bottle_tag}.json", JSON.generate(json_contents)) unless args.dry_run?
@@ -133,6 +108,16 @@ module Homebrew
       end
 
       private
+
+      # An advisory-database or network failure must not break the API build;
+      # the `vulnerabilities` field is omitted and the build proceeds.
+      sig { returns(T.nilable(Homebrew::Vulns::AdvisoryDatabase)) }
+      def load_advisory_database
+        Homebrew::Vulns::AdvisoryDatabase.load
+      rescue Homebrew::Vulns::CachedFeed::Error, ErrorDuringExecution => e
+        opoo "Skipping vulnerabilities field: #{e.message.lines.first&.strip}"
+        nil
+      end
 
       sig { params(title: String).returns(String) }
       def html_template(title)

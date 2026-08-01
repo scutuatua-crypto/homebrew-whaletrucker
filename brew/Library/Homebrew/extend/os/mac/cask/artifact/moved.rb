@@ -16,6 +16,16 @@ module OS
           def undeletable?(target)
             MacOS.undeletable?(target)
           end
+
+          sig { params(target: ::Pathname, source: ::Pathname).returns(T::Array[T.any(String, ::Pathname)]) }
+          def backup_copy_args(target, source)
+            args = super
+
+            return args if MacOS.version < :sonoma
+            return args if target.stat.dev != source.dirname.stat.dev
+
+            ["-c", *args]
+          end
         end
       end
     end

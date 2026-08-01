@@ -26,6 +26,8 @@ module OS
         self["VERSIONER_PERL_VERSION"] = MacOS.preferred_perl_version
       end
 
+      private
+
       sig { returns(T::Boolean) }
       def no_weak_imports_support?
         compiler == :clang

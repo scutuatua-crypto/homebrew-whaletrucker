@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "utils/shell"
@@ -67,20 +68,20 @@ RSpec.describe Utils::Shell do
   end
 
   specify "::sh_quote" do
-    expect(described_class.send(:sh_quote, "")).to eq("''")
-    expect(described_class.send(:sh_quote, "\\")).to eq("\\\\")
-    expect(described_class.send(:sh_quote, "\n")).to eq("'\n'")
-    expect(described_class.send(:sh_quote, "$")).to eq("\\$")
-    expect(described_class.send(:sh_quote, "word")).to eq("word")
+    expect(described_class.sh_quote("")).to eq("''")
+    expect(described_class.sh_quote("\\")).to eq("\\\\")
+    expect(described_class.sh_quote("\n")).to eq("'\n'")
+    expect(described_class.sh_quote("$")).to eq("\\$")
+    expect(described_class.sh_quote("word")).to eq("word")
   end
 
   specify "::csh_quote" do
-    expect(described_class.send(:csh_quote, "")).to eq("''")
-    expect(described_class.send(:csh_quote, "\\")).to eq("\\\\")
+    expect(described_class.csh_quote("")).to eq("''")
+    expect(described_class.csh_quote("\\")).to eq("\\\\")
     # NOTE: This test is different than for `sh`.
-    expect(described_class.send(:csh_quote, "\n")).to eq("'\\\n'")
-    expect(described_class.send(:csh_quote, "$")).to eq("\\$")
-    expect(described_class.send(:csh_quote, "word")).to eq("word")
+    expect(described_class.csh_quote("\n")).to eq("'\\\n'")
+    expect(described_class.csh_quote("$")).to eq("\\$")
+    expect(described_class.csh_quote("word")).to eq("word")
   end
 
   describe "::prepend_path_in_profile" do
@@ -103,6 +104,14 @@ RSpec.describe Utils::Shell do
       ENV["fish_user_paths"] = "/some/path"
       expect(described_class.prepend_path_in_profile(path))
         .to eq("fish_add_path #{path}")
+    end
+  end
+
+  describe "::set_variable_in_profile" do
+    it "supports mksh" do
+      ENV["SHELL"] = "/bin/mksh"
+      expect(described_class.set_variable_in_profile("HOMEBREW_FOO", "bar"))
+        .to eq("echo 'export HOMEBREW_FOO=bar' >> #{described_class.profile}")
     end
   end
 

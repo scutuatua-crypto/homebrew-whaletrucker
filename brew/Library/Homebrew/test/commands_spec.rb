@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "commands"
@@ -47,6 +48,15 @@ RSpec.describe Commands do
     expect(cmds).not_to include("rbdevcmd"), "Dev commands shouldn't be included"
   end
 
+  specify "::internal_commands omits commands hidden from the manpage" do
+    hidden_parser = instance_double(Homebrew::CLI::Parser, hide_from_man_page: true)
+    allow(Homebrew::CLI::Parser).to receive(:from_cmd_path).and_call_original
+    allow(Homebrew::CLI::Parser).to receive(:from_cmd_path).with(Commands::HOMEBREW_CMD_PATH/"rbcmd.rb")
+                                                           .and_return(hidden_parser)
+
+    expect(described_class.internal_commands).not_to include("rbcmd")
+  end
+
   specify "::internal_developer_commands" do
     cmds = described_class.internal_developer_commands
     expect(cmds).to include("rbdevcmd"), "Ruby commands files should be recognized"
@@ -73,6 +83,103 @@ RSpec.describe Commands do
       expect(cmds).to include("t2"), "Executable Ruby files should be included"
       expect(cmds).to include("t3"), "Executable files with a Ruby extension should be included"
       expect(cmds).not_to include("t4"), "Non-executable files shouldn't be included"
+    end
+  end
+
+  describe "::suggestion_message" do
+    let(:internal_commands) { %w[doctor up upgrade] }
+    let(:all_commands) { %w[doctor external-command up upgrade] }
+
+    before do
+      allow(described_class).to receive(:commands).with(external: false, aliases: true).and_return(internal_commands)
+      allow(described_class).to receive(:commands).with(aliases: true).and_return(all_commands)
+    end
+
+    it "suggests a command for a typo" do
+      expect(described_class.suggestion_message("upgrde")).to eq("\nDid you mean upgrade?")
+    end
+
+    it "suggests a command alias for a typo" do
+      expect(described_class.suggestion_message("upp")).to eq("\nDid you mean up?")
+    end
+
+    it "falls back to external command suggestions" do
+      expect(described_class.suggestion_message("external-comand")).to eq("\nDid you mean external-command?")
+    end
+
+    it "does not suggest a command without a close match" do
+      expect(described_class.suggestion_message("zzzzzz")).to be_empty
+    end
+  end
+
+  describe "::rebuild_internal_commands_completion_list" do
+    it "omits internal command aliases" do
+      mktmpdir do |repository|
+        stub_const("HOMEBREW_REPOSITORY", repository)
+        (repository/"completions").mkpath
+
+        described_class.rebuild_internal_commands_completion_list
+
+        commands = (repository/"completions/internal_commands_list.txt").read.lines(chomp: true)
+        expect(commands & described_class.internal_commands_aliases).to be_empty
+      end
+    end
+
+    it "omits commands hidden from the manpage" do
+      mktmpdir do |repository|
+        stub_const("HOMEBREW_REPOSITORY", repository)
+        (repository/"completions").mkpath
+        hidden_parser = instance_double(Homebrew::CLI::Parser, hide_from_man_page: true)
+        allow(Homebrew::CLI::Parser).to receive(:from_cmd_path).and_call_original
+        allow(Homebrew::CLI::Parser).to receive(:from_cmd_path).with(Commands::HOMEBREW_CMD_PATH/"rbcmd.rb")
+                                                               .and_return(hidden_parser)
+
+        described_class.rebuild_internal_commands_completion_list
+
+        commands = (repository/"completions/internal_commands_list.txt").read.lines(chomp: true)
+        expect(commands).not_to include("rbcmd")
+      end
+    end
+  end
+
+  describe "::rebuild_commands_completion_list" do
+    it "omits internal command aliases from the cached command list" do
+      mktmpdir do |cache|
+        stub_const("HOMEBREW_CACHE", cache)
+        allow(described_class).to receive(:external_commands).and_return(["external"])
+
+        described_class.rebuild_commands_completion_list
+
+        commands = (cache/"all_commands_list.txt").read.lines(chomp: true)
+        expect(commands & described_class.internal_commands_aliases).to be_empty
+      end
+    end
+
+    it "omits commands hidden from the manpage from the cached command list" do
+      mktmpdir do |cache|
+        stub_const("HOMEBREW_CACHE", cache)
+        allow(described_class).to receive(:external_commands).and_return(["external"])
+        hidden_parser = instance_double(Homebrew::CLI::Parser, hide_from_man_page: true)
+        allow(Homebrew::CLI::Parser).to receive(:from_cmd_path).and_call_original
+        allow(Homebrew::CLI::Parser).to receive(:from_cmd_path).with(Commands::HOMEBREW_CMD_PATH/"rbcmd.rb")
+                                                               .and_return(hidden_parser)
+
+        described_class.rebuild_commands_completion_list
+
+        commands = (cache/"all_commands_list.txt").read.lines(chomp: true)
+        expect(commands).not_to include("rbcmd")
+      end
+    end
+
+    it "does not load external command files" do
+      mktmpdir do |cache|
+        stub_const("HOMEBREW_CACHE", cache)
+        allow(described_class).to receive(:external_commands).and_return(["external"])
+
+        expect(described_class).not_to receive(:external_ruby_v2_cmd_path)
+
+        described_class.rebuild_commands_completion_list
+      end
     end
   end
 

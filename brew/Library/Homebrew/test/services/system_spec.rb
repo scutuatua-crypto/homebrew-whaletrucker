@@ -1,35 +1,79 @@
+# typed: true
 # frozen_string_literal: true
 
 require "services/system"
+require "test/support/helper/services"
 
 RSpec.describe Homebrew::Services::System do
-  describe "#launchctl" do
-    it "macOS - outputs launchctl command location", :needs_macos do
-      expect(described_class.launchctl).to eq(Pathname.new("/bin/launchctl"))
-    end
+  include Test::Helper::Services
 
-    it "Other - outputs launchctl command location", :needs_linux do
-      expect(described_class.launchctl).to be_nil
+  let(:bindir) { mktmpdir }
+
+  before { reset_services_memoization! }
+
+  describe "#launchctl" do
+    it "returns the launchctl command location when available and nil when unavailable" do
+      launchctl = bindir/"launchctl"
+      launchctl.write <<~SH
+        #!/bin/sh
+        exit 0
+      SH
+      launchctl.chmod 0755
+
+      with_env(PATH: bindir.to_s) do
+        expect(described_class.launchctl).to eq(launchctl)
+      end
+
+      reset_services_memoization!
+      launchctl.unlink
+
+      with_env(PATH: bindir.to_s) do
+        expect(described_class.launchctl).to be_nil
+      end
     end
   end
 
   describe "#launchctl?" do
-    it "macOS - outputs launchctl presence", :needs_macos do
-      expect(described_class.launchctl?).to be(true)
-    end
+    it "returns true when launchctl is available and false when unavailable" do
+      launchctl = bindir/"launchctl"
+      launchctl.write <<~SH
+        #!/bin/sh
+        exit 0
+      SH
+      launchctl.chmod 0755
 
-    it "Other - outputs launchctl presence", :needs_linux do
-      expect(described_class.launchctl?).to be(false)
+      with_env(PATH: bindir.to_s) do
+        expect(described_class.launchctl?).to be(true)
+      end
+
+      reset_services_memoization!
+      launchctl.unlink
+
+      with_env(PATH: bindir.to_s) do
+        expect(described_class.launchctl?).to be(false)
+      end
     end
   end
 
   describe "#systemctl?" do
-    it "Linux with SystemD - outputs systemctl presence", :needs_systemd do
-      expect(described_class.systemctl?).to be(true)
-    end
+    it "returns true when systemctl is available and false when unavailable" do
+      systemctl = bindir/"systemctl"
+      systemctl.write <<~SH
+        #!/bin/sh
+        exit 0
+      SH
+      systemctl.chmod 0755
 
-    it "Other - outputs systemctl presence", :needs_macos do
-      expect(described_class.systemctl?).to be(false)
+      with_env(PATH: bindir.to_s) do
+        expect(described_class.systemctl?).to be(true)
+      end
+
+      reset_services_memoization!
+      systemctl.unlink
+
+      with_env(PATH: bindir.to_s) do
+        expect(described_class.systemctl?).to be(false)
+      end
     end
   end
 
@@ -45,24 +89,13 @@ RSpec.describe Homebrew::Services::System do
     end
   end
 
-  describe "#user_of_process" do
-    it "returns the username for empty PID" do
-      expect(described_class.user_of_process(nil)).to eq(ENV.fetch("USER"))
+  describe "#user_exists?" do
+    it "returns true when a specified user exists" do
+      expect(described_class.user_exists?(ENV.fetch("USER"))).to be(true)
     end
 
-    it "returns the PID username" do
-      allow(Utils).to receive(:safe_popen_read).and_return <<~EOS
-        USER
-        user
-      EOS
-      expect(described_class.user_of_process(50)).to eq("user")
-    end
-
-    it "returns nil if unavailable" do
-      allow(Utils).to receive(:safe_popen_read).and_return <<~EOS
-        USER
-      EOS
-      expect(described_class.user_of_process(50)).to be_nil
+    it "returns false when a specified user does not exist" do
+      expect(described_class.user_exists?("not_a_real_user_#{SecureRandom.hex(4)}")).to be(false)
     end
   end
 

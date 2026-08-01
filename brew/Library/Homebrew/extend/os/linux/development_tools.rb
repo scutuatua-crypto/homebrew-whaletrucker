@@ -11,7 +11,7 @@ module OS
 
         sig { params(tool: T.any(String, Symbol)).returns(T.nilable(::Pathname)) }
         def locate(tool)
-          @locate ||= T.let({}, T.nilable(T::Hash[T.any(String, Symbol), Pathname]))
+          @locate ||= T.let({}, T.nilable(T::Hash[T.any(String, Symbol), ::Pathname]))
           @locate.fetch(tool) do |key|
             @locate[key] = if ::DevelopmentTools.needs_build_formulae? &&
                               (binutils_path = HOMEBREW_PREFIX/"opt/binutils/bin/#{tool}").executable?
@@ -29,6 +29,23 @@ module OS
 
         sig { returns(Symbol) }
         def default_compiler = :gcc
+
+        sig { returns(String) }
+        def installation_instructions
+          <<~EOS
+            Install a system C compiler and the standard development tools for
+            your Linux distribution. See:
+              https://docs.brew.sh/Homebrew-on-Linux#requirements
+          EOS
+        end
+
+        sig { returns(String) }
+        def custom_installation_instructions
+          <<~EOS
+            Install GNU's GCC:
+              brew install gcc
+          EOS
+        end
 
         sig { returns(T::Boolean) }
         def needs_libc_formula?

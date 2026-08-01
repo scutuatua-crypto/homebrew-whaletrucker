@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "dev-cmd/pr-pull"
@@ -6,83 +7,93 @@ require "tap"
 require "cmd/shared_examples/args_parse"
 
 RSpec.describe Homebrew::DevCmd::PrPull do
-  include FileUtils
-
   let(:pr_pull) { described_class.new(["foo"]) }
   let(:formula_rebuild) do
-    <<~EOS
+    <<~RUBY
       class Foo < Formula
         desc "Helpful description"
         url "https://brew.sh/foo-1.0.tgz"
       end
-    EOS
+    RUBY
   end
   let(:formula_revision) do
-    <<~EOS
+    <<~RUBY
       class Foo < Formula
         url "https://brew.sh/foo-1.0.tgz"
         revision 1
       end
-    EOS
+    RUBY
   end
   let(:formula_version) do
-    <<~EOS
+    <<~RUBY
       class Foo < Formula
         url "https://brew.sh/foo-2.0.tgz"
       end
-    EOS
+    RUBY
   end
   let(:formula) do
-    <<~EOS
+    <<~RUBY
       class Foo < Formula
         url "https://brew.sh/foo-1.0.tgz"
       end
-    EOS
+    RUBY
   end
   let(:cask_rebuild) do
-    <<~EOS
+    <<~RUBY
       cask "food" do
         desc "Helpful description"
         version "1.0"
         sha256 "a"
         url "https://brew.sh/food-\#{version}.tgz"
       end
-    EOS
+    RUBY
   end
   let(:cask_checksum) do
-    <<~EOS
+    <<~RUBY
       cask "food" do
         desc "Helpful description"
         version "1.0"
         sha256 "b"
         url "https://brew.sh/food-\#{version}.tgz"
       end
-    EOS
+    RUBY
   end
   let(:cask_version) do
-    <<~EOS
+    <<~RUBY
       cask "food" do
         version "2.0"
         sha256 "a"
         url "https://brew.sh/food-\#{version}.tgz"
       end
-    EOS
+    RUBY
   end
   let(:cask) do
-    <<~EOS
+    <<~RUBY
       cask "food" do
         version "1.0"
         sha256 "a"
         url "https://brew.sh/food-\#{version}.tgz"
       end
-    EOS
+    RUBY
   end
   let(:tap) { Tap.fetch("Homebrew", "foo") }
   let(:formula_file) { tap.path/"Formula/foo.rb" }
   let(:cask_file) { tap.cask_dir/"food.rb" }
   let(:path) { Pathname(HOMEBREW_TAP_DIRECTORY/"homebrew/homebrew-foo") }
 
+  include FileUtils
+
   it_behaves_like "parseable arguments"
+
+  describe "#check_pull_request_head_sha!" do
+    it "outputs the pull request head SHA" do
+      allow(GitHub).to receive(:pull_request_commits).with("Homebrew", "foo", "1").and_return(["actual"])
+
+      expect do
+        described_class.new(["1"]).check_pull_request_head_sha!("Homebrew", "foo", "1")
+      end.to output(/Pull request #1 head SHA: actual/).to_stdout
+    end
+  end
 
   describe "#autosquash!" do
     it "squashes a formula or cask correctly" do
@@ -117,6 +128,49 @@ RSpec.describe Homebrew::DevCmd::PrPull do
         git_repo = GitRepository.new(path)
         expect(git_repo.commit_message).to include("food 2.0")
         expect(git_repo.commit_message).to include("Co-authored-by: #{secondary_author}")
+      end
+    end
+
+    context "when squashing raises an error" do
+      let!(:original_hash) do
+        (tap.path/"Formula").mkpath
+        formula_file.write(formula)
+        cd(tap.path) do
+          safe_system Utils::Git.git, "init"
+          safe_system Utils::Git.git, "add", formula_file
+          safe_system Utils::Git.git, "commit", "-m", "foo 1.0 (new formula)"
+          `git rev-parse HEAD`.chomp
+        end
+      end
+
+      before do
+        cd tap.path do
+          File.write(formula_file, formula_revision)
+          safe_system Utils::Git.git, "commit", formula_file, "-m", "revision"
+        end
+        allow(Utils::Git).to receive(:cherry_pick!).and_raise(
+          ErrorDuringExecution.new(["git", "cherry-pick"], status: 1),
+        )
+      end
+
+      it "aborts the cherry-pick when cherry_picked is true" do
+        cd(tap.path) do
+          allow(pr_pull).to receive(:system).and_call_original
+          expect(pr_pull).to receive(:system).with("git", "-C", tap.path.to_s, "cherry-pick", "--abort")
+          expect do
+            pr_pull.autosquash!(original_hash, tap:, cherry_picked: true)
+          end.to raise_error(ErrorDuringExecution)
+        end
+      end
+
+      it "does not abort the cherry-pick when cherry_picked is false" do
+        cd(tap.path) do
+          allow(pr_pull).to receive(:system).and_call_original
+          expect(pr_pull).not_to receive(:system).with("git", "-C", tap.path.to_s, "cherry-pick", "--abort")
+          expect do
+            pr_pull.autosquash!(original_hash, tap:, cherry_picked: false)
+          end.to raise_error(ErrorDuringExecution)
+        end
       end
     end
   end

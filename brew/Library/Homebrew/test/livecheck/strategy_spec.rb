@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "livecheck/strategy"
@@ -7,7 +8,6 @@ RSpec.describe Homebrew::Livecheck::Strategy do
 
   let(:url) { "https://brew.sh/" }
   let(:redirection_url) { "https://brew.sh/redirection" }
-
   let(:post_hash) do
     {
       empty:   "",
@@ -18,7 +18,6 @@ RSpec.describe Homebrew::Livecheck::Strategy do
   end
   let(:form_string) { "empty=&boolean=true&number=1&string=a+%2B+b+%3D+c" }
   let(:json_string) { '{"empty":"","boolean":"true","number":"1","string":"a + b = c"}' }
-
   let(:response_hash) do
     response_hash = {}
 
@@ -26,7 +25,10 @@ RSpec.describe Homebrew::Livecheck::Strategy do
       status_code: "200",
       status_text: "OK",
       headers:     {
-        "cache-control"  => "max-age=604800",
+        "cache-control"  => [
+          "max-age=604800, must-revalidate",
+          "public, no-transform",
+        ],
         "content-type"   => "text/html; charset=UTF-8",
         "date"           => "Wed, 1 Jan 2020 01:23:45 GMT",
         "expires"        => "Wed, 31 Jan 2020 01:23:45 GMT",
@@ -39,7 +41,10 @@ RSpec.describe Homebrew::Livecheck::Strategy do
       status_code: "301",
       status_text: "Moved Permanently",
       headers:     {
-        "cache-control"  => "max-age=604800",
+        "cache-control"  => [
+          "max-age=604800, must-revalidate",
+          "public, no-transform",
+        ],
         "content-type"   => "text/html; charset=UTF-8",
         "date"           => "Wed, 1 Jan 2020 01:23:45 GMT",
         "expires"        => "Wed, 31 Jan 2020 01:23:45 GMT",
@@ -51,7 +56,6 @@ RSpec.describe Homebrew::Livecheck::Strategy do
 
     response_hash
   end
-
   let(:body) do
     <<~HTML
       <!DOCTYPE html>
@@ -68,7 +72,6 @@ RSpec.describe Homebrew::Livecheck::Strategy do
       </html>
     HTML
   end
-
   let(:response_text) do
     response_text = {}
 
@@ -184,6 +187,25 @@ RSpec.describe Homebrew::Livecheck::Strategy do
       expect(strategy.page_headers(url)).to eq([responses.first[:headers]])
     end
 
+    it "only allows HTTPS redirects" do
+      expect(strategy).to receive(:curl_headers).with(
+        "--max-redirs",
+        "5",
+        "--proto-redir",
+        "=https",
+        url,
+        wanted_headers:    ["location", "content-disposition"],
+        use_homebrew_curl: false,
+        cookies:           nil,
+        header:            nil,
+        referer:           nil,
+        user_agent:        :default,
+        **Homebrew::Livecheck::Strategy::DEFAULT_CURL_OPTIONS,
+      ).and_return({ responses:, body: })
+
+      expect(strategy.page_headers(url)).to eq([responses.first[:headers]])
+    end
+
     it "handles `cookies` `url` options" do
       allow(strategy).to receive(:curl_headers).and_return({ responses:, body: })
 
@@ -277,6 +299,55 @@ RSpec.describe Homebrew::Livecheck::Strategy do
       allow(strategy).to receive(:curl_output).and_return([response_text[:ok], nil, success_status])
 
       expect(strategy.page_content(url)).to eq({ content: body })
+    end
+
+    it "only allows HTTPS redirects" do
+      allow_any_instance_of(Utils::Curl).to receive(:curl_version).and_return(curl_version)
+
+      expect(strategy).to receive(:curl_output).with(
+        "--fail-with-body",
+        "--include",
+        "--location",
+        "--max-redirs",
+        "5",
+        "--proto-redir",
+        "=https",
+        "--silent",
+        "--compressed",
+        url,
+        **Homebrew::Livecheck::Strategy::DEFAULT_CURL_OPTIONS,
+        use_homebrew_curl: false,
+        cookies:           nil,
+        header:            nil,
+        referer:           nil,
+        user_agent:        :default,
+      ).and_return([response_text[:ok], nil, success_status])
+
+      expect(strategy.page_content(url)).to eq({ content: body })
+    end
+
+    it "handles `compressed` `url` option" do
+      allow_any_instance_of(Utils::Curl).to receive(:curl_version).and_return(curl_version)
+      allow_any_instance_of(Utils::Curl).to receive(:curl_output).and_return(
+        [response_text[:ok], nil, success_status],
+      )
+
+      expect_any_instance_of(Utils::Curl).to receive(:curl_output).with(
+        *Homebrew::Livecheck::Strategy::PAGE_CONTENT_CURL_ARGS,
+        url,
+        **Homebrew::Livecheck::Strategy::DEFAULT_CURL_OPTIONS,
+        use_homebrew_curl: false,
+        cookies:           nil,
+        header:            nil,
+        referer:           nil,
+        user_agent:        :default,
+      )
+      expect(
+        strategy.page_content(
+          url,
+          options: Homebrew::Livecheck::Options.new(compressed: false),
+        ),
+      ).to eq({ content: body })
     end
 
     it "handles `cookies` `url` option" do
@@ -397,6 +468,9 @@ RSpec.describe Homebrew::Livecheck::Strategy do
     it "returns an array of version strings when given a valid value" do
       expect(strategy.handle_block_return("1.2.3")).to eq(["1.2.3"])
       expect(strategy.handle_block_return(["1.2.3", "1.2.4"])).to eq(["1.2.3", "1.2.4"])
+      expect(strategy.handle_block_return([Version.new("1.2.3"), "1.2.4"])).to eq(["1.2.3", "1.2.4"])
+      expect(strategy.handle_block_return([Version.new("1.2.3"), nil, "1.2.4"])).to eq(["1.2.3", "1.2.4"])
+      expect(strategy.handle_block_return([Version.new("1.2.3"), "1.2.3", nil, "1.2.4"])).to eq(["1.2.3", "1.2.4"])
     end
 
     it "returns an empty array when given a nil value" do
@@ -405,7 +479,7 @@ RSpec.describe Homebrew::Livecheck::Strategy do
 
     it "errors when given an invalid value" do
       expect { strategy.handle_block_return(123) }
-        .to raise_error(TypeError, strategy::INVALID_BLOCK_RETURN_VALUE_MSG)
+        .to raise_error(TypeError, Homebrew::Livecheck::Strategy::INVALID_BLOCK_RETURN_VALUE_MSG)
     end
   end
 end

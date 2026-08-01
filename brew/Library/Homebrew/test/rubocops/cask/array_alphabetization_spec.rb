@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "rubocops/rubocop-cask"
@@ -57,6 +58,33 @@ RSpec.describe RuboCop::Cop::Cask::ArrayAlphabetization, :config do
         rmdir: [
           "/Applications/foo/",
           "/Applications/foo/nested/blah",
+        ]
+      end
+    CASK
+  end
+
+  it "sorts by element content regardless of inconsistent indentation" do
+    expect_offense(<<~CASK)
+      cask "foo" do
+        url "https://example.com/foo.zip"
+
+        zap trash: [
+                   ^ The array elements should be ordered alphabetically
+             "~/Library/Caches/Foo",
+             "~/Library/HTTPStorages/Foo",
+          "~/Library/Application Support/Foo",
+        ]
+      end
+    CASK
+
+    expect_correction(<<~CASK)
+      cask "foo" do
+        url "https://example.com/foo.zip"
+
+        zap trash: [
+          "~/Library/Application Support/Foo",
+             "~/Library/Caches/Foo",
+             "~/Library/HTTPStorages/Foo",
         ]
       end
     CASK

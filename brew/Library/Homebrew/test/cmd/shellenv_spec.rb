@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 RSpec.describe "brew shellenv", type: :system do

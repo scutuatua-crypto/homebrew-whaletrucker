@@ -18,6 +18,7 @@ module Formatter
   # Format a string as headline.
   #
   # @api internal
+  # Keep in sync with `headline` in Library/Homebrew/utils/formatter.sh.
   sig { params(string: String, color: T.nilable(Symbol)).returns(String) }
   def self.headline(string, color: nil)
     arrow("#{Tty.bold}#{string}#{Tty.reset}", color:)
@@ -28,6 +29,7 @@ module Formatter
     "#{Tty.green}#{string}#{Tty.default}"
   end
 
+  # Keep in sync with `bold` in Library/Homebrew/utils/formatter.sh.
   sig { params(string: String).returns(String) }
   def self.bold(string)
     "#{Tty.bold}#{string}#{Tty.reset}"
@@ -99,7 +101,7 @@ module Formatter
           .gsub(/(.{1,#{width}})( +|$)(?!-)\n?/, "\\1\n")
   end
 
-  sig { params(string: T.nilable(T.any(String, URI::Generic))).returns(String) }
+  T::Sig::WithoutRuntime.sig { params(string: T.nilable(T.any(String, URI::Generic))).returns(String) }
   def self.url(string)
     "#{Tty.underline}#{string}#{Tty.no_underline}"
   end
@@ -130,8 +132,8 @@ module Formatter
   # Layout objects in columns that fit the current terminal width.
   #
   # @api internal
-  sig { params(objects: T::Array[String], gap_size: Integer).returns(String) }
-  def self.columns(objects, gap_size: 2)
+  sig { params(objects: T::Array[String], gap_size: Integer, min_width: Integer).returns(String) }
+  def self.columns(objects, gap_size: 2, min_width: 0)
     objects = objects.flatten.map(&:to_s)
 
     fallback = proc do
@@ -143,13 +145,13 @@ module Formatter
 
     console_width = Tty.width
     object_lengths = objects.map { |obj| Tty.strip_ansi(obj).length }
-    cols = (console_width + gap_size) / (T.must(object_lengths.max) + gap_size)
+    max_length = [*object_lengths, min_width].max || 0
+    cols = (console_width + gap_size) / (max_length + gap_size)
 
     fallback.call if cols < 2
 
     rows = (objects.count + cols - 1) / cols
-    cols = (objects.count + rows - 1) / rows # avoid empty trailing columns
-
+    cols = (objects.count + rows - 1) / rows if min_width.zero? # avoid empty trailing columns
     col_width = ((console_width + gap_size) / cols) - gap_size
 
     gap_string = "".rjust(gap_size)
@@ -172,5 +174,48 @@ module Formatter
     end
 
     output.freeze
+  end
+
+  sig {
+    params(
+      size_in_bytes: T.any(Integer, Float),
+      precision:     T.nilable(Integer),
+    ).returns([T.any(Integer, Float), String])
+  }
+  def self.disk_usage_readable_size_unit(size_in_bytes, precision: nil)
+    size = size_in_bytes
+    unit = "B"
+    %w[KB MB GB].each do |next_unit|
+      break if (precision ? size.abs.round(precision) : size.abs) < 1000
+
+      size /= 1000.0
+      unit = next_unit
+    end
+    [size, unit]
+  end
+
+  sig { params(size_in_bytes: T.any(Integer, Float)).returns(String) }
+  def self.disk_usage_readable(size_in_bytes)
+    size, unit = disk_usage_readable_size_unit(size_in_bytes)
+    # avoid trailing zero after decimal point
+    if ((size * 10).to_i % 10).zero?
+      "#{size.to_i}#{unit}"
+    else
+      "#{format("%<size>.1f", size:)}#{unit}"
+    end
+  end
+
+  sig { params(number: Integer).returns(String) }
+  def self.number_readable(number)
+    numstr = number.to_i.to_s
+    (numstr.size - 3).step(1, -3) { |i| numstr.insert(i.to_i, ",") }
+    numstr
+  end
+
+  sig { params(input: String, secrets: T::Array[String]).returns(String) }
+  def self.redact_secrets(input, secrets)
+    secrets.compact
+           .reduce(input) { |str, secret| str.gsub secret, "******" }
+           .freeze
   end
 end

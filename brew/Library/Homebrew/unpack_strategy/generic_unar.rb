@@ -30,7 +30,7 @@ module UnpackStrategy
                         "-force-overwrite", "-quiet", "-no-directory",
                         "-output-directory", unpack_dir, "--", path
                       ],
-                      env:     { "PATH" => PATH.new(Formula["unar"].opt_bin, ENV.fetch("PATH")) },
+                      env:     Utils::Path.formula_opt_bin_env("unar"),
                       verbose:
     end
   end

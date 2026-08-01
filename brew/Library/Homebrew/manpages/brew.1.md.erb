@@ -3,7 +3,9 @@
 #
 # - For changes to a command under `COMMANDS` or `DEVELOPER COMMANDS` sections):
 #   - Find the source file in `Library/Homebrew/[dev-]cmd/<command>.{rb,sh}`.
-#   - For `.rb` files, edit the `<command>_args` method.
+#   - For `.rb` files, edit the `cmd_args` block. For subcommand metadata,
+#     edit `Library/Homebrew/<command>/subcommand.rb` and
+#     `Library/Homebrew/<command>/subcommand/*.rb` if they exist.
 #   - For `.sh` files, edit the top comment, being sure to use the line prefix
 #     `#:` for the comments to be recognized as documentation. If in doubt,
 #     compare with already documented commands.
@@ -14,8 +16,8 @@
 # When done, regenerate the man page and its HTML version by running
 # `brew generate-man-completions`.
 %>
-brew(1) -- The Missing Package Manager for macOS (or Linux)
-===========================================================
+brew(1) -- The Package Manager for Everywhere
+==============================================
 
 ## SYNOPSIS
 
@@ -152,7 +154,7 @@ can take several different forms:
 
 ## SPECIFYING CASKS
 
-Many Homebrew Cask commands accept one or more <cask> arguments. These can be
+Many commands that work with casks accept one or more <cask> arguments. These can be
 specified the same way as the <formula> arguments described in
 `SPECIFYING FORMULAE` above.
 
@@ -211,8 +213,6 @@ Homebrew API: <https://docs.brew.sh/rubydoc/>
 <%= lead_maintainers.concat("\n") %>
 
 <%= maintainers.concat("\n") %>
-
-<%= alumni.concat("\n") %>
 
 ## BUGS
 

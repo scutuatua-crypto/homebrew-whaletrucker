@@ -1,10 +1,11 @@
+# typed: true
 # frozen_string_literal: true
 
 require "services/system"
 require "services/formula_wrapper"
 require "tempfile"
 
-RSpec.describe Homebrew::Services::FormulaWrapper do
+RSpec.describe Homebrew::Services::FormulaWrapper, :needs_daemon_manager do
   subject(:service) { described_class.new(formula) }
 
   let(:formula) do
@@ -14,11 +15,11 @@ RSpec.describe Homebrew::Services::FormulaWrapper do
                     service_name:           "plist-mysql-test",
                     launchd_service_path:   Pathname.new("/usr/local/opt/mysql/homebrew.mysql.plist"),
                     systemd_service_path:   Pathname.new("/usr/local/opt/mysql/homebrew.mysql.service"),
+                    systemd_timer_path:     Pathname.new("/usr/local/opt/mysql/homebrew.mysql.timer"),
                     opt_prefix:             Pathname.new("/usr/local/opt/mysql"),
                     any_version_installed?: true,
                     service?:               false)
   end
-
   let(:service_object) do
     instance_double(Homebrew::Service,
                     requires_root?: false,
@@ -150,6 +151,16 @@ RSpec.describe Homebrew::Services::FormulaWrapper do
       expect(service.loaded?).to be(false)
     end
 
+    it "systemD - checks timer status for timed services" do
+      allow(Homebrew::Services::System).to receive_messages(launchctl?: false, systemctl?: true)
+      allow(service).to receive(:timed?).and_return(true)
+      expect(Homebrew::Services::System::Systemctl).to receive(:quiet_run)
+        .with("status", "homebrew.mysql.timer")
+        .and_return(true)
+
+      expect(service.loaded?).to be(true)
+    end
+
     it "Other - raises an error" do
       allow(Homebrew::Services::System).to receive_messages(launchctl?: false, systemctl?: false)
       expect do
@@ -159,29 +170,24 @@ RSpec.describe Homebrew::Services::FormulaWrapper do
     end
   end
 
-  describe "#plist?" do
-    it "false if not installed" do
-      allow(service).to receive(:installed?).and_return(false)
-      expect(service.plist?).to be(false)
-    end
-
-    it "true if installed and file" do
-      tempfile = File.new("/tmp/foo", File::CREAT)
-      allow(service).to receive_messages(installed?: true, service_file: Pathname.new(tempfile))
-      expect(service.plist?).to be(true)
-      File.delete(tempfile)
-    end
-
-    it "false if opt_prefix missing" do
-      allow(service).to receive_messages(installed?:   true,
-                                         service_file: Pathname.new(File::NULL),
-                                         formula:      instance_double(Formula,
-                                                                       opt_prefix: Pathname.new("/dfslkfhjdsolshlk")))
-      expect(service.plist?).to be(false)
-    end
-  end
-
   describe "#owner" do
+    it "reads the user from a launchd plist" do
+      plist = mktmpdir/"homebrew.test.plist"
+      plist.write <<~XML
+        <?xml version="1.0" encoding="UTF-8"?>
+        <plist version="1.0">
+          <dict>
+            <key>UserName</key>
+            <string>_serviced</string>
+          </dict>
+        </plist>
+      XML
+      allow(Homebrew::Services::System).to receive(:launchctl?).and_return(true)
+      allow(service).to receive(:dest).and_return(plist)
+
+      expect(service.owner).to eq("_serviced")
+    end
+
     it "root if file present" do
       allow(service).to receive(:boot_path_service_file_present?).and_return(true)
       expect(service.owner).to eq("root")
@@ -323,10 +329,10 @@ RSpec.describe Homebrew::Services::FormulaWrapper do
       expect(service.timed?).to be(false)
     end
 
-    it "returns nil if no service" do
+    it "returns false if no service" do
       allow(service).to receive(:service?).once.and_return(false)
 
-      expect(service.timed?).to be_nil
+      expect(service.timed?).to be(false)
     end
   end
 
@@ -349,10 +355,10 @@ RSpec.describe Homebrew::Services::FormulaWrapper do
       expect(service.keep_alive?).to be(false)
     end
 
-    it "returns nil if no service" do
+    it "returns false if no service" do
       allow(service).to receive(:service?).once.and_return(false)
 
-      expect(service.keep_alive?).to be_nil
+      expect(service.keep_alive?).to be(false)
     end
   end
 
@@ -372,7 +378,8 @@ RSpec.describe Homebrew::Services::FormulaWrapper do
   describe "#to_hash" do
     it "represents non-service values" do
       allow(Homebrew::Services::System).to receive_messages(launchctl?: true, systemctl?: false)
-      allow_any_instance_of(described_class).to receive_messages(service?: false, service_file_present?: false)
+      allow_any_instance_of(described_class).to receive_messages(service?:              false,
+                                                                 service_file_present?: false)
       expected = {
         exit_code:    nil,
         file:         Pathname.new("/usr/local/opt/mysql/homebrew.mysql.plist"),
@@ -382,7 +389,7 @@ RSpec.describe Homebrew::Services::FormulaWrapper do
         pid:          nil,
         registered:   false,
         running:      false,
-        schedulable:  nil,
+        schedulable:  false,
         service_name: "plist-mysql-test",
         status:       :none,
         user:         nil,
@@ -404,7 +411,7 @@ RSpec.describe Homebrew::Services::FormulaWrapper do
         pid:          nil,
         registered:   true,
         running:      false,
-        schedulable:  nil,
+        schedulable:  false,
         service_name: "plist-mysql-test",
         status:       :none,
         user:         nil,

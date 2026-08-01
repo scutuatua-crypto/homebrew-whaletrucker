@@ -3,6 +3,9 @@
 
 require "utils/output"
 
+# Homebrew extends Ruby's `Kernel` to make our code more readable.
+# Extending Kernel makes these methods available globally.
+# TODO: move all of these to other modules e.g. Utils.
 module Kernel
   sig { params(env: T.nilable(String)).returns(T::Boolean) }
   def superenv?(env)
@@ -40,15 +43,6 @@ module Kernel
     with_env(PATH: PATH.new(ORIGINAL_PATHS).to_s, &block)
   end
 
-  sig {
-    type_parameters(:U)
-      .params(locale: String, block: T.proc.returns(T.type_parameter(:U)))
-      .returns(T.type_parameter(:U))
-  }
-  def with_custom_locale(locale, &block)
-    with_env(LC_ALL: locale, &block)
-  end
-
   # Kernel.system but with exceptions.
   sig {
     params(
@@ -59,12 +53,10 @@ module Kernel
     ).void
   }
   def safe_system(cmd, argv0 = nil, *args, **options)
-    # TODO: migrate to utils.rb Homebrew.safe_system
-    require "utils"
+    # odeprecated: remove this method in a later release, use `Homebrew.safe_system` directly instead
+    require "homebrew"
 
-    return if Homebrew.system(cmd, argv0, *args, **options)
-
-    raise ErrorDuringExecution.new([cmd, argv0, *args], status: $CHILD_STATUS)
+    Homebrew.safe_system(cmd, argv0, *args, **options)
   end
 
   # Run a system command without any output.
@@ -78,20 +70,16 @@ module Kernel
     ).returns(T::Boolean)
   }
   def quiet_system(cmd, argv0 = nil, *args)
-    # TODO: migrate to utils.rb Homebrew.quiet_system
-    require "utils"
+    # odeprecated: remove this method in a later release, use `Homebrew.quiet_system` directly instead
+    require "homebrew"
 
-    Homebrew._system(cmd, argv0, *args) do
-      # Redirect output streams to `/dev/null` instead of closing as some programs
-      # will fail to execute if they can't write to an open stream.
-      $stdout.reopen(File::NULL)
-      $stderr.reopen(File::NULL)
-    end
+    Homebrew.quiet_system(cmd, argv0, *args)
   end
 
   # Find a command.
   #
   # @api public
+  # Keep in sync with `which` in Library/Homebrew/utils.sh.
   sig { params(cmd: String, path: PATH::Elements).returns(T.nilable(Pathname)) }
   def which(cmd, path = ENV.fetch("PATH"))
     PATH.new(path).each do |p|
@@ -148,7 +136,7 @@ module Kernel
     end
   end
 
-  IGNORE_INTERRUPTS_MUTEX = T.let(Thread::Mutex.new.freeze, Thread::Mutex)
+  IGNORE_INTERRUPTS_MUTEX = Thread::Mutex.new.freeze
 
   sig { type_parameters(:U).params(_block: T.proc.returns(T.type_parameter(:U))).returns(T.type_parameter(:U)) }
   def ignore_interrupts(&_block)
@@ -201,76 +189,7 @@ module Kernel
     return executable if executable
 
     require "formula"
-    Formulary.factory_stub(formula_name).ensure_installed!(reason:, latest:).opt_bin/name
-  end
-
-  sig {
-    params(
-      size_in_bytes: T.any(Integer, Float),
-      precision:     T.nilable(Integer),
-    ).returns([T.any(Integer, Float), String])
-  }
-  def disk_usage_readable_size_unit(size_in_bytes, precision: nil)
-    size = size_in_bytes
-    unit = "B"
-    %w[KB MB GB].each do |next_unit|
-      break if (precision ? size.abs.round(precision) : size.abs) < 1000
-
-      size /= 1000.0
-      unit = next_unit
-    end
-    [size, unit]
-  end
-
-  sig { params(size_in_bytes: T.any(Integer, Float)).returns(String) }
-  def disk_usage_readable(size_in_bytes)
-    size, unit = disk_usage_readable_size_unit(size_in_bytes)
-    # avoid trailing zero after decimal point
-    if ((size * 10).to_i % 10).zero?
-      "#{size.to_i}#{unit}"
-    else
-      "#{format("%<size>.1f", size:)}#{unit}"
-    end
-  end
-
-  sig { params(number: Integer).returns(String) }
-  def number_readable(number)
-    numstr = number.to_i.to_s
-    (numstr.size - 3).step(1, -3) { |i| numstr.insert(i.to_i, ",") }
-    numstr
-  end
-
-  # Truncates a text string to fit within a byte size constraint,
-  # preserving character encoding validity. The returned string will
-  # be not much longer than the specified max_bytes, though the exact
-  # shortfall or overrun may vary.
-  sig { params(str: String, max_bytes: Integer, options: T::Hash[Symbol, T.untyped]).returns(String) }
-  def truncate_text_to_approximate_size(str, max_bytes, options = {})
-    front_weight = options.fetch(:front_weight, 0.5)
-    raise "opts[:front_weight] must be between 0.0 and 1.0" if front_weight < 0.0 || front_weight > 1.0
-    return str if str.bytesize <= max_bytes
-
-    glue = "\n[...snip...]\n"
-    max_bytes_in = [max_bytes - glue.bytesize, 1].max
-    bytes = str.dup.force_encoding("BINARY")
-    glue_bytes = glue.encode("BINARY")
-    n_front_bytes = (max_bytes_in * front_weight).floor
-    n_back_bytes = max_bytes_in - n_front_bytes
-    if n_front_bytes.zero?
-      front = bytes[1..0]
-      back = bytes[-max_bytes_in..]
-    elsif n_back_bytes.zero?
-      front = bytes[0..(max_bytes_in - 1)]
-      back = bytes[1..0]
-    else
-      front = bytes[0..(n_front_bytes - 1)]
-      back = bytes[-n_back_bytes..]
-    end
-    out = T.must(front) + glue_bytes + T.must(back)
-    out.force_encoding("UTF-8")
-    out.encode!("UTF-16", invalid: :replace)
-    out.encode!("UTF-8")
-    out
+    T.cast(Formula[formula_name].ensure_installed!(reason:, latest:, executable: name), Pathname)
   end
 
   # Calls the given block with the passed environment variables
@@ -309,25 +228,5 @@ module Kernel
     ensure
       ENV.update(old_values)
     end
-  end
-
-  sig { returns(T.proc.params(a: String, b: String).returns(Integer)) }
-  def tap_and_name_comparison
-    proc do |a, b|
-      if a.include?("/") && b.exclude?("/")
-        1
-      elsif a.exclude?("/") && b.include?("/")
-        -1
-      else
-        a <=> b
-      end
-    end
-  end
-
-  sig { params(input: String, secrets: T::Array[String]).returns(String) }
-  def redact_secrets(input, secrets)
-    secrets.compact
-           .reduce(input) { |str, secret| str.gsub secret, "******" }
-           .freeze
   end
 end

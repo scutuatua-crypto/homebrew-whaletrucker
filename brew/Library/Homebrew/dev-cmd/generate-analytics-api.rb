@@ -11,7 +11,7 @@ module Homebrew
         build-error install install-on-request
         core-build-error core-install core-install-on-request
         cask-install core-cask-install os-version
-        homebrew-devcmdrun-developer homebrew-os-arch-ci
+        homebrew-devcmdrun-developer homebrew-env-config homebrew-os-arch-ci
         homebrew-prefixes homebrew-versions
         brew-command-run brew-command-run-options brew-test-bot-test
       ].freeze
@@ -27,6 +27,8 @@ module Homebrew
         EOS
 
         named_args :none
+
+        hide_from_man_page!
       end
 
       sig { params(category_name: String, data_source: T.nilable(String)).returns(String) }

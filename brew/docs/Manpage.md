@@ -1,4 +1,4 @@
-# brew(1) -- The Missing Package Manager for macOS (or Linux)
+# brew(1) -- The Package Manager for Everywhere
 
 ## SYNOPSIS
 
@@ -112,18 +112,13 @@ Show an alias's command. If no alias is given, print the whole list.
 : Edit aliases in a text editor. Either one or all aliases may be opened at
   once. If the given alias doesn't exist it'll be pre-populated with a template.
 
-### `analytics` \[*`subcommand`*\]
+### `as-console-user` *`command`* \[*`args`* ...\]
 
-Control Homebrew's anonymous aggregate user behaviour analytics. Read more at
-<https://docs.brew.sh/Analytics>.
+Run a Homebrew command as the active macOS console user.
 
-`brew analytics` \[`state`\]
-
-: Display the current state of Homebrew's analytics.
-
-`brew analytics` (`on`\|`off`)
-
-: Turn Homebrew's analytics on or off respectively.
+This is intended for MDM, Munki and Jamf workflows where `brew` is invoked as
+root but Homebrew operations should run as the logged-in console user. The
+nested command is always dispatched through `HOMEBREW_BREW_FILE`.
 
 ### `autoremove` \[`--dry-run`\]
 
@@ -136,91 +131,12 @@ and are now no longer needed.
 
 ### `bundle` \[*`subcommand`*\]
 
-Bundler for non-Ruby dependencies from Homebrew, Homebrew Cask, Mac App Store,
-Visual Studio Code (and forks/variants), Go packages, Cargo packages and
-Flatpak.
+Bundler for non-Ruby dependencies from Homebrew formulae, Homebrew casks, Mac
+App Store dependencies, VSCode (and forks/variants) extensions, Go packages,
+Cargo packages, uv tools, Flatpak packages, WinGet packages, Krew plugins and
+npm packages.
 
 Note: Flatpak support is only available on Linux.
-
-`brew bundle` \[`install`\]
-
-: Install and upgrade (by default) all dependencies from the `Brewfile`.
-
-You can specify the `Brewfile` location using `--file` or by setting the
-`$HOMEBREW_BUNDLE_FILE` environment variable.
-
-You can skip the installation of dependencies by adding space-separated values
-to one or more of the following environment variables:
-`$HOMEBREW_BUNDLE_BREW_SKIP`, `$HOMEBREW_BUNDLE_CASK_SKIP`,
-`$HOMEBREW_BUNDLE_MAS_SKIP`, `$HOMEBREW_BUNDLE_TAP_SKIP`.
-
-`brew bundle upgrade`
-
-: Shorthand for `brew bundle install --upgrade`.
-
-`brew bundle dump`
-
-: Write all installed casks/formulae/images/taps into a `Brewfile` in the
-  current directory or to a custom file specified with the `--file` option.
-
-`brew bundle cleanup`
-
-: Uninstall all dependencies not present in the `Brewfile`.
-
-This workflow is useful for maintainers or testers who regularly install lots of
-formulae.
-
-Unless `--force` is passed, this returns a 1 exit code if anything would be
-removed.
-
-`brew bundle check`
-
-: Check if all dependencies present in the `Brewfile` are installed.
-
-This provides a successful exit code if everything is up-to-date, making it
-useful for scripting.
-
-`brew bundle list`
-
-: List all dependencies present in the `Brewfile`.
-
-By default, only Homebrew formula dependencies are listed.
-
-`brew bundle edit`
-
-: Edit the `Brewfile` in your editor.
-
-`brew bundle add` *`name`* \[...\]
-
-: Add entries to your `Brewfile`. Adds formulae by default. Use `--cask`,
-  `--tap` or `--vscode` to add the corresponding entry instead.
-
-`brew bundle remove` *`name`* \[...\]
-
-: Remove entries that match `name` from your `Brewfile`. Use `--formula`,
-  `--cask`, `--tap`, `--mas` or `--vscode` to remove only entries of the
-  corresponding type. Passing `--formula` also removes matches against formula
-  aliases and old formula names.
-
-`brew bundle exec` \[`--check`\] \[`--no-secrets`\] *`command`*
-
-: Run an external command in an isolated build environment based on the
-  `Brewfile` dependencies.
-
-This sanitized build environment ignores unrequested dependencies, which makes
-sure that things you didn't specify in your `Brewfile` won't get picked up by
-commands like `bundle install`, `npm install`, etc. It will also add compiler
-flags which will help with finding keg-only dependencies like `openssl`,
-`icu4c`, etc.
-
-`brew bundle sh` \[`--check`\] \[`--no-secrets`\]
-
-: Run your shell in a `brew bundle exec` environment.
-
-`brew bundle env` \[`--check`\] \[`--no-secrets`\]
-
-: Print the environment variables that would be set in a `brew bundle exec`
-  environment.
 
 `--file`
 
@@ -233,85 +149,380 @@ flags which will help with finding keg-only dependencies like `openssl`,
   set), `${XDG_CONFIG_HOME}/homebrew/Brewfile` (if `$XDG_CONFIG_HOME` is set),
   `~/.homebrew/Brewfile` or `~/.Brewfile` otherwise.
 
+`brew bundle sh` \[`--check`\] \[`--no-secrets`\]
+
+: Run your shell in a `brew bundle exec` environment.
+
+`--install`
+
+: Run `install` before starting the shell.
+
+`--services`
+
+: Temporarily start services while running the shell. Enabled by default if
+  `$HOMEBREW_BUNDLE_SERVICES` is set.
+
+`--check`
+
+: Check that all dependencies in the Brewfile are installed before starting the
+  shell. Enabled by default if `$HOMEBREW_BUNDLE_CHECK` is set.
+
+`--no-secrets`
+
+: Attempt to remove secrets from the environment before starting the shell.
+
+`brew bundle remove` *`name`* \[...\]
+
+: Remove entries that match `name` from your `Brewfile`. Use `--formula`,
+  `--cask`, `--tap`, `--mas`, `--vscode`, `--go`, `--cargo`, `--uv`,
+  `--flatpak`, `--winget`, `--krew` and `--npm` to remove only entries of the
+  corresponding type. Passing `--formula` also removes matches against formula
+  aliases and old formula names.
+
+`--install`
+
+: Run `install` before removing entries.
+
+`--formula`
+
+: Remove Homebrew formula entries, including matches against formula aliases and
+  old names.
+
+`--cask`
+
+: Remove Homebrew cask entries.
+
+`--tap`
+
+: Remove Homebrew tap entries.
+
+`--mas`
+
+: Remove entries for Mac App Store dependencies.
+
+`--vscode`
+
+: Remove entries for VSCode (and forks/variants) extensions.
+
+`--go`
+
+: Remove entries for Go packages.
+
+`--cargo`
+
+: Remove entries for Cargo packages.
+
+`--uv`
+
+: Remove entries for uv tools.
+
+`--flatpak`
+
+: Remove entries for Flatpak packages. Note: Linux only.
+
+`--winget`
+
+: Remove entries for WinGet packages. Note: WSL only.
+
+`--krew`
+
+: Remove entries for Krew plugins.
+
+`--npm`
+
+: Remove entries for npm packages.
+
+`brew bundle list`
+
+: List all dependencies present in the `Brewfile`.
+
+By default, only Homebrew formula dependencies are listed.
+
+`--install`
+
+: Run `install` before listing dependencies.
+
+`--all`
+
+: List all dependencies.
+
+`--formula`
+
+: List Homebrew formula dependencies.
+
+`--cask`
+
+: List Homebrew cask dependencies.
+
+`--tap`
+
+: List Homebrew tap dependencies.
+
+`--mas`
+
+: List Mac App Store dependencies.
+
+`--vscode`
+
+: List VSCode (and forks/variants) extensions.
+
+`--go`
+
+: List Go packages.
+
+`--cargo`
+
+: List Cargo packages.
+
+`--uv`
+
+: List uv tools.
+
+`--flatpak`
+
+: List Flatpak packages. Note: Linux only.
+
+`--winget`
+
+: List WinGet packages. Note: WSL only.
+
+`--krew`
+
+: List Krew plugins.
+
+`--npm`
+
+: List npm packages.
+
+`brew bundle` \[`install`\|`upgrade`\]
+
+: Install and upgrade (by default) all dependencies from the `Brewfile`.
+
+Use this to restore a recorded installed state from a `Brewfile`.
+
+`brew bundle upgrade` is shorthand for `brew bundle install --upgrade`.
+
+You can specify the `Brewfile` location using `--file` or by setting the
+`$HOMEBREW_BUNDLE_FILE` environment variable.
+
+You can skip the installation of dependencies by adding space-separated values
+to one or more of the following environment variables:
+`$HOMEBREW_BUNDLE_BREW_SKIP`, `$HOMEBREW_BUNDLE_CASK_SKIP`,
+`$HOMEBREW_BUNDLE_MAS_SKIP`, `$HOMEBREW_BUNDLE_TAP_SKIP`.
+
 `-v`, `--verbose`
 
-: `install` prints output from commands as they are run. `check` lists all
-  missing dependencies.
+: Print output from commands as they are run.
 
 `--no-upgrade`
 
-: `install` does not run `brew upgrade` on outdated dependencies. `check` does
-  not check for outdated dependencies. Note they may still be upgraded by `brew
-  install` if needed. Enabled by default if `$HOMEBREW_BUNDLE_NO_UPGRADE` is
-  set.
+: Do not run `brew upgrade` on outdated dependencies. Note they may still be
+  upgraded by `brew install` if needed. Enabled by default if
+  `$HOMEBREW_BUNDLE_NO_UPGRADE` is set.
 
 `--upgrade`
 
-: `install` runs `brew upgrade` on outdated dependencies, even if
+: Run `brew upgrade` on outdated dependencies, even if
   `$HOMEBREW_BUNDLE_NO_UPGRADE` is set.
 
 `--upgrade-formulae`
 
-: `install` runs `brew upgrade` on any of these comma-separated formulae, even
-  if `$HOMEBREW_BUNDLE_NO_UPGRADE` is set.
+: Run `brew upgrade` on any of these comma-separated formulae, even if
+  `$HOMEBREW_BUNDLE_NO_UPGRADE` is set.
 
-`--install`
+`--jobs`
 
-: Run `install` before continuing to other operations, e.g. `exec`.
-
-`--services`
-
-: Temporarily start services while running the `exec` or `sh` command. Enabled
-  by default if `$HOMEBREW_BUNDLE_SERVICES` is set.
+: Run up to this many formula installations in parallel. Defaults to 1
+  (sequential). Use `auto` for the number of CPU cores (max 4).
 
 `-f`, `--force`
 
-: `install` runs with `--force`/`--overwrite`. `dump` overwrites an existing
-  `Brewfile`. `cleanup` actually performs its cleanup operations.
+: Run with `--force`/`--overwrite`.
 
-`--cleanup`
+`--force-cleanup`
 
-: `install` performs cleanup operation, same as running `cleanup --force`.
-  Enabled by default if `$HOMEBREW_BUNDLE_INSTALL_CLEANUP` is set and `--global`
-  is passed.
+: Perform cleanup after installing dependencies without asking. Enabled by
+  default if `$HOMEBREW_BUNDLE_FORCE_INSTALL_CLEANUP` is set and `--global` is
+  passed.
 
-`--all`
+`--zap`
 
-: `list` all dependencies.
+: Use `zap` instead of `uninstall` when cleaning up casks after installing
+  dependencies.
+
+`brew bundle exec` \[`--check`\] \[`--no-secrets`\] \[`--sandbox=`*`path`*\] \[`--deny-network`\] *`command`*
+
+: Run an external command in an isolated build environment based on the
+  `Brewfile` dependencies.
+
+This sanitised build environment ignores unrequested dependencies, which makes
+sure that things you didn't specify in your `Brewfile` won't get picked up by
+commands like `bundle install`, `npm install`, etc. It will also add compiler
+flags which will help with finding keg-only dependencies like `openssl`,
+`icu4c`, etc.
+
+`--install`
+
+: Run `install` before executing the command.
+
+`--services`
+
+: Temporarily start services while executing the command. Enabled by default if
+  `$HOMEBREW_BUNDLE_SERVICES` is set.
+
+`--check`
+
+: Check that all dependencies in the Brewfile are installed before executing the
+  command. Enabled by default if `$HOMEBREW_BUNDLE_CHECK` is set.
+
+`--no-secrets`
+
+: Attempt to remove secrets from the environment before executing the command.
+
+`--sandbox`
+
+: Run *`command`* in Homebrew's sandbox, allowing writes to *`path`* and
+  Homebrew's temporary and cache directories.
+
+`--deny-network`
+
+: Deny network access from inside the sandbox.
+
+`brew bundle env` \[`--check`\] \[`--no-secrets`\]
+
+: Print the environment variables that would be set in a `brew bundle exec`
+  environment.
+
+`--install`
+
+: Run `install` before printing the environment.
+
+`--check`
+
+: Check that all dependencies in the Brewfile are installed before printing the
+  environment. Enabled by default if `$HOMEBREW_BUNDLE_CHECK` is set.
+
+`--no-secrets`
+
+: Attempt to remove secrets from the environment before printing it.
+
+`brew bundle edit`
+
+: Edit the `Brewfile` in your editor.
+
+`--install`
+
+: Run `install` before editing the `Brewfile`.
+
+`brew bundle dump`
+
+: Write all installed casks/formulae/images/taps into a `Brewfile` in the
+  current directory or to a custom file specified with the `--file` option. This
+  is useful as an installed-state snapshot and can be kept in version control
+  and diffed.
+
+`--install`
+
+: Run `install` before dumping dependencies.
+
+`-f`, `--force`
+
+: Overwrite an existing `Brewfile`.
 
 `--formula`
 
-: `list`, `dump` or `cleanup` Homebrew formula dependencies.
+: Dump Homebrew formula dependencies.
+
+`--no-formula`
+
+: Dump without Homebrew formula dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_BREW` is set.
+
+`--no-dump-brew`
+
+: Dump without Homebrew formula dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_BREW` is set.
 
 `--cask`
 
-: `list`, `dump` or `cleanup` Homebrew cask dependencies.
+: Dump Homebrew cask dependencies.
+
+`--no-cask`
+
+: Dump without Homebrew cask dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_CASK` is set.
+
+`--no-dump-cask`
+
+: Dump without Homebrew cask dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_CASK` is set.
 
 `--tap`
 
-: `list`, `dump` or `cleanup` Homebrew tap dependencies.
+: Dump Homebrew tap dependencies.
+
+`--no-tap`
+
+: Dump without Homebrew tap dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_TAP` is set.
+
+`--no-dump-tap`
+
+: Dump without Homebrew tap dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_TAP` is set.
 
 `--mas`
 
-: `list` or `dump` Mac App Store dependencies.
+: Dump Mac App Store dependencies.
 
 `--vscode`
 
-: `list`, `dump` or `cleanup` VSCode (and forks/variants) extensions.
+: Dump VSCode (and forks/variants) extensions.
 
 `--go`
 
-: `list` or `dump` Go packages.
+: Dump Go packages.
 
 `--cargo`
 
-: `list` or `dump` Cargo packages.
+: Dump Cargo packages.
+
+`--uv`
+
+: Dump uv tools.
 
 `--flatpak`
 
-: `list` or `dump` Flatpak packages. Note: Linux only.
+: Dump Flatpak packages. Note: Linux only.
+
+`--winget`
+
+: Dump WinGet packages. Note: WSL only.
+
+`--krew`
+
+: Dump Krew plugins.
+
+`--npm`
+
+: Dump npm packages.
+
+`--no-mas`
+
+: `dump` without Mac App Store dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_MAS` is set.
+
+`--no-dump-mas`
+
+: `dump` without Mac App Store dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_MAS` is set.
 
 `--no-vscode`
+
+: `dump` without VSCode (and forks/variants) extensions. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_VSCODE` is set.
+
+`--no-dump-vscode`
 
 : `dump` without VSCode (and forks/variants) extensions. Enabled by default if
   `$HOMEBREW_BUNDLE_DUMP_NO_VSCODE` is set.
@@ -321,39 +532,349 @@ flags which will help with finding keg-only dependencies like `openssl`,
 : `dump` without Go packages. Enabled by default if
   `$HOMEBREW_BUNDLE_DUMP_NO_GO` is set.
 
+`--no-dump-go`
+
+: `dump` without Go packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_GO` is set.
+
 `--no-cargo`
 
 : `dump` without Cargo packages. Enabled by default if
   `$HOMEBREW_BUNDLE_DUMP_NO_CARGO` is set.
+
+`--no-dump-cargo`
+
+: `dump` without Cargo packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_CARGO` is set.
+
+`--no-uv`
+
+: `dump` without uv tools. Enabled by default if `$HOMEBREW_BUNDLE_DUMP_NO_UV`
+  is set.
+
+`--no-dump-uv`
+
+: `dump` without uv tools. Enabled by default if `$HOMEBREW_BUNDLE_DUMP_NO_UV`
+  is set.
 
 `--no-flatpak`
 
 : `dump` without Flatpak packages. Enabled by default if
   `$HOMEBREW_BUNDLE_DUMP_NO_FLATPAK` is set.
 
-`--describe`
+`--no-dump-flatpak`
 
-: `dump` adds a description comment above each line, unless the dependency does
-  not have a description. Enabled by default if `$HOMEBREW_BUNDLE_DUMP_DESCRIBE`
-  is set.
+: `dump` without Flatpak packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_FLATPAK` is set.
+
+`--no-winget`
+
+: `dump` without WinGet packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_WINGET` is set.
+
+`--no-dump-winget`
+
+: `dump` without WinGet packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_WINGET` is set.
+
+`--no-krew`
+
+: `dump` without Krew plugins. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_KREW` is set.
+
+`--no-dump-krew`
+
+: `dump` without Krew plugins. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_KREW` is set.
+
+`--no-npm`
+
+: `dump` without npm packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_NPM` is set.
+
+`--no-dump-npm`
+
+: `dump` without npm packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_DUMP_NO_NPM` is set.
+
+`--no-describe`
+
+: Do not add description comments above each line. Description comments are the
+  default. Enabled by default if `$HOMEBREW_BUNDLE_NO_DESCRIBE` is set.
 
 `--no-restart`
 
-: `dump` does not add `restart_service` to formula lines.
+: Do not add `restart_service` to formula lines.
+
+`brew bundle cleanup`
+
+: Uninstall all dependencies not present in the `Brewfile`.
+
+This workflow is useful for maintainers or testers who regularly install lots of
+formulae.
+
+Unless `--force` is passed, this prompts before removing anything and returns a
+1 exit code if the prompt is declined or cannot be shown.
+
+`--install`
+
+: Run `install` before cleaning up dependencies.
+
+`-f`, `--force`
+
+: Actually perform cleanup operations.
+
+`--all`
+
+: Clean up all supported dependencies.
+
+`--formula`
+
+: Clean up Homebrew formula dependencies.
+
+`--no-formula`
+
+: Clean up without Homebrew formula dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_BREW` is set.
+
+`--no-cleanup-brew`
+
+: Clean up without Homebrew formula dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_BREW` is set.
+
+`--cask`
+
+: Clean up Homebrew cask dependencies.
+
+`--no-cask`
+
+: Clean up without Homebrew cask dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_CASK` is set.
+
+`--no-cleanup-cask`
+
+: Clean up without Homebrew cask dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_CASK` is set.
+
+`--tap`
+
+: Clean up Homebrew tap dependencies.
+
+`--no-tap`
+
+: Clean up without Homebrew tap dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_TAP` is set.
+
+`--no-cleanup-tap`
+
+: Clean up without Homebrew tap dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_TAP` is set.
+
+`--mas`
+
+: Clean up Mac App Store dependencies.
+
+`--no-mas`
+
+: `cleanup` without Mac App Store dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_MAS` is set.
+
+`--no-cleanup-mas`
+
+: `cleanup` without Mac App Store dependencies. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_MAS` is set.
+
+`--vscode`
+
+: Clean up VSCode (and forks/variants) extensions.
+
+`--no-vscode`
+
+: `cleanup` without VSCode (and forks/variants) extensions. Enabled by default
+  if `$HOMEBREW_BUNDLE_CLEANUP_NO_VSCODE` is set.
+
+`--no-cleanup-vscode`
+
+: `cleanup` without VSCode (and forks/variants) extensions. Enabled by default
+  if `$HOMEBREW_BUNDLE_CLEANUP_NO_VSCODE` is set.
+
+`--go`
+
+: Clean up Go packages.
+
+`--no-go`
+
+: `cleanup` without Go packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_GO` is set.
+
+`--no-cleanup-go`
+
+: `cleanup` without Go packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_GO` is set.
+
+`--cargo`
+
+: Clean up Cargo packages.
+
+`--no-cargo`
+
+: `cleanup` without Cargo packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_CARGO` is set.
+
+`--no-cleanup-cargo`
+
+: `cleanup` without Cargo packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_CARGO` is set.
+
+`--uv`
+
+: Clean up uv tools.
+
+`--no-uv`
+
+: `cleanup` without uv tools. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_UV` is set.
+
+`--no-cleanup-uv`
+
+: `cleanup` without uv tools. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_UV` is set.
+
+`--flatpak`
+
+: Clean up Flatpak packages. Note: Linux only.
+
+`--no-flatpak`
+
+: `cleanup` without Flatpak packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_FLATPAK` is set.
+
+`--no-cleanup-flatpak`
+
+: `cleanup` without Flatpak packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_FLATPAK` is set.
+
+`--winget`
+
+: Clean up WinGet packages. Note: WSL only.
+
+`--no-winget`
+
+: `cleanup` without WinGet packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_WINGET` is set.
+
+`--no-cleanup-winget`
+
+: `cleanup` without WinGet packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_WINGET` is set.
+
+`--krew`
+
+: Clean up Krew plugins.
+
+`--no-krew`
+
+: `cleanup` without Krew plugins. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_KREW` is set.
+
+`--no-cleanup-krew`
+
+: `cleanup` without Krew plugins. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_KREW` is set.
+
+`--npm`
+
+: Clean up npm packages.
+
+`--no-npm`
+
+: `cleanup` without npm packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_NPM` is set.
+
+`--no-cleanup-npm`
+
+: `cleanup` without npm packages. Enabled by default if
+  `$HOMEBREW_BUNDLE_CLEANUP_NO_NPM` is set.
 
 `--zap`
 
-: `cleanup` casks using the `zap` command instead of `uninstall`.
+: Clean up casks using the `zap` command instead of `uninstall`.
 
-`--check`
+`brew bundle check`
 
-: Check that all dependencies in the Brewfile are installed before running
-  `exec`, `sh`, or `env`. Enabled by default if `$HOMEBREW_BUNDLE_CHECK` is set.
+: Check if all dependencies present in the `Brewfile` are installed.
 
-`--no-secrets`
+This provides a successful exit code if everything is up-to-date, making it
+useful for scripting. Use `--verbose` to list unmet dependencies.
 
-: Attempt to remove secrets from the environment before `exec`, `sh`, or `env`.
-  Enabled by default if `$HOMEBREW_BUNDLE_NO_SECRETS` is set.
+`-v`, `--verbose`
+
+: List all missing dependencies.
+
+`--no-upgrade`
+
+: Do not check for outdated dependencies. Note they may still be upgraded by
+  `brew install` if needed. Enabled by default if `$HOMEBREW_BUNDLE_NO_UPGRADE`
+  is set.
+
+`--install`
+
+: Run `install` before checking dependencies.
+
+`brew bundle add` *`name`* \[...\]
+
+: Add entries to your `Brewfile`. Adds formulae by default. Use `--cask`,
+  `--tap`, `--vscode`, `--go`, `--cargo`, `--uv`, `--flatpak`, `--krew` and
+  `--npm` to add the corresponding entry instead.
+
+`--install`
+
+: Run `install` before adding entries.
+
+`--formula`
+
+: Add Homebrew formula entries.
+
+`--cask`
+
+: Add Homebrew cask entries.
+
+`--tap`
+
+: Add Homebrew tap entries.
+
+`--vscode`
+
+: Add entries for VSCode (and forks/variants) extensions.
+
+`--go`
+
+: Add entries for Go packages.
+
+`--cargo`
+
+: Add entries for Cargo packages.
+
+`--uv`
+
+: Add entries for uv tools.
+
+`--flatpak`
+
+: Add entries for Flatpak packages. Note: Linux only.
+
+`--krew`
+
+: Add entries for Krew plugins.
+
+`--npm`
+
+: Add entries for npm packages.
+
+`--no-describe`
+
+: Do not add description comments above each line. Description comments are the
+  default. Enabled by default if `$HOMEBREW_BUNDLE_NO_DESCRIBE` is set.
 
 ### `casks`
 
@@ -414,13 +935,17 @@ Show lists of built-in and external commands.
 Control whether Homebrew automatically links external tap shell completion
 files. Read more at <https://docs.brew.sh/Shell-Completion>.
 
+`brew completions unlink`
+
+: Unlink Homebrew's completions.
+
 `brew completions` \[`state`\]
 
 : Display the current state of Homebrew's completions.
 
-`brew completions` (`link`\|`unlink`)
+`brew completions link`
 
-: Link or unlink Homebrew's completions.
+: Link Homebrew's completions.
 
 ### `config`, `--config`
 
@@ -508,20 +1033,19 @@ passed, this command displays their actual runtime dependencies (similar to
 : List dependencies for formulae that are currently installed. If *`formula`* is
   specified, list only its dependencies that are currently installed.
 
+`--brewfile`
+
+: Use formulae and casks listed in a Brewfile as inputs. Defaults to
+  `./Brewfile`; use `--brewfile=`*`path`* to specify another.
+
 `--missing`
 
 : Show only missing dependencies.
 
-`--eval-all`
-
-: Evaluate all available formulae and casks, whether installed or not, to list
-  their dependencies.
-
 `--for-each`
 
-: Switch into the mode used by the `--eval-all` option, but only list
-  dependencies for each provided *`formula`*, one formula per line. This is used
-  for debugging the `--installed`/`--eval-all` display mode.
+: Switch into the mode used when evaluating all formulae and casks, but only
+  list dependencies for each provided *`formula`*, one formula per line.
 
 `--HEAD`
 
@@ -563,11 +1087,6 @@ first search, making that search slower than subsequent ones.
 : Search just descriptions for *`text`*. If *`text`* is flanked by slashes, it
   is interpreted as a regular expression.
 
-`--eval-all`
-
-: Evaluate all available formulae and casks, whether installed or not, to search
-  their descriptions. Enabled by default if `$HOMEBREW_EVAL_ALL` is set.
-
 `--formula`
 
 : Treat all named arguments as formulae.
@@ -586,9 +1105,13 @@ latest stable version along with some other behaviour changes.
 
 : Display the current state of Homebrew's developer mode.
 
-`brew developer` (`on`\|`off`)
+`brew developer on`
 
-: Turn Homebrew's developer mode on or off respectively.
+: Turn Homebrew's developer mode on.
+
+`brew developer off`
+
+: Turn Homebrew's developer mode off.
 
 ### `docs`
 
@@ -612,6 +1135,37 @@ working fine: please don't worry or file an issue; just ignore this.
 
 : Enable debugging and profiling of audit methods.
 
+### `exec`, `x` \[`--formulae=`*`formulae`*\] \[`--sandbox=`*`path`*\] \[`--deny-network`\] \[`--`\] *`command`* \[*`args`* ...\]
+
+Run *`command`* in an environment populated by Homebrew formulae.
+
+If `--formulae` is passed, Homebrew installs those comma-separated formulae if
+needed, prepends their executable directories and those of their dependencies to
+`PATH` and runs *`command`*. This allows *`command`* to be a script path such as
+`./script.sh`.
+
+If `--formulae` is omitted, Homebrew finds a formula that provides *`command`*,
+installs it if needed and runs that executable.
+
+Example: `brew exec --formulae=jq,yq -- ./script.sh`
+
+Scripts can also use a shebang on systems with `env -S`: `#!/usr/bin/env -S brew
+exec --formulae=jq,yq --`
+
+`--formulae`
+
+: Comma-separated formulae to install and add to `PATH` before running
+  *`command`*.
+
+`--sandbox`
+
+: Run *`command`* in Homebrew's sandbox, allowing writes to *`path`* and
+  Homebrew's temporary and cache directories.
+
+`--deny-network`
+
+: Deny network access from inside the sandbox.
+
 ### `fetch` \[*`options`*\] *`formula`*\|*`cask`* \[...\]
 
 Download a bottle (if available) or source packages for *`formula`*e and
@@ -626,6 +1180,11 @@ binaries for *`cask`*s. For files, also print SHA-256 checksums.
 
 : Download for the given CPU architecture. (Pass `all` to download for all
   architectures.)
+
+`--all-platforms`
+
+: Download for every supported operating system and architecture, plus each
+  language for *`cask`*s, fetching each distinct URL once.
 
 `--bottle-tag`
 
@@ -679,14 +1238,10 @@ binaries for *`cask`*s. For files, also print SHA-256 checksums.
 
 List all locally installable formulae including short names.
 
-### `gist-logs` \[*`options`*\] *`formula`*
+### `gist-logs` \[`--new-issue`\] \[`--private`\] *`formula`*
 
 Upload logs for a failed build of *`formula`* to a new Gist. Presents an error
 message if no logs are found.
-
-`--with-hostname`
-
-: Include the hostname in the Gist.
 
 `-n`, `--new-issue`
 
@@ -743,25 +1298,18 @@ Display brief statistics for your Homebrew installation. If a *`formula`* or
 : Open the GitHub source page for *`formula`* and *`cask`* in a browser. To view
   the history locally: `brew log -p` *`formula`* or *`cask`*
 
-`--fetch-manifest`
-
-: Fetch GitHub Packages manifest for extra information when *`formula`* is not
-  installed.
-
 `--json`
 
 : Print a JSON representation. Currently the default value for *`version`* is
-  `v1` for *`formula`*. For *`formula`* and *`cask`* use `v2`. See the docs for
-  examples of using the JSON output: <https://docs.brew.sh/Querying-Brew>
+  `v1`.`v1` is valid for *`formula`* only. `v2` is valid for both *`formula`*
+  and *`cask`*.See the docs for examples of using the JSON output:
+  <https://docs.brew.sh/Querying-Brew>
 
 `--installed`
 
-: Print JSON of formulae that are currently installed.
-
-`--eval-all`
-
-: Evaluate all available formulae and casks, whether installed or not, to print
-  their JSON.
+: Output a human-readable inventory of installed formulae and casks. If `--json`
+  is passed, print JSON for installed formulae and, with `--json=v2`, installed
+  casks.
 
 `--variations`
 
@@ -769,7 +1317,8 @@ Display brief statistics for your Homebrew installation. If a *`formula`* or
 
 `-v`, `--verbose`
 
-: Show more verbose analytics data for *`formula`*.
+: Show more verbose data for *`formula`*, or full information with
+  `--installed`.
 
 `--formula`
 
@@ -822,11 +1371,10 @@ upgrade *`formula`* if it is already installed but outdated.
 
 : Show what would be installed, but do not actually install anything.
 
-`--ask`
+`-y`, `--no-ask`
 
-: Ask for confirmation before downloading and installing formulae. Print
-  download and install sizes of bottles and dependencies. Enabled by default if
-  `$HOMEBREW_ASK` is set.
+: Do not ask for confirmation before downloading and installing. Ask mode is the
+  default. Enabled by default if `$HOMEBREW_NO_ASK` is set.
 
 `--formula`
 
@@ -928,13 +1476,11 @@ upgrade *`formula`* if it is already installed but outdated.
 
 `--[no-]binaries`
 
-: Disable/enable linking of helper executables (default: enabled). Enabled by
-  default if `$HOMEBREW_CASK_OPTS_BINARIES` is set.
+: Disable/enable linking of helper executables (default: enabled).
 
 `--require-sha`
 
-: Require all casks to have a checksum. Enabled by default if
-  `$HOMEBREW_CASK_OPTS_REQUIRE_SHA` is set.
+: Require all casks to have a checksum.
 
 `--adopt`
 
@@ -1010,22 +1556,28 @@ paths within its current keg. If *`cask`* is provided, list its artifacts.
 : Show the version number for installed formulae, or only the specified formulae
   if *`formula`* are provided.
 
+`--json`
+
+: Output installed formulae and casks with versions, linked and opt-linked
+  formula versions and pinned versions as JSON using the fast Bash command path.
+  Requires `--versions`, no named arguments and `jq`.
+
 `--multiple`
 
-: Only show formulae with multiple versions installed.
+: Only show formulae with multiple versions installed. Implies `--versions`.
 
 `--pinned`
 
-: List only pinned formulae, or only the specified (pinned) formulae if
-  *`formula`* are provided. See also `pin`, `unpin`.
+: List only pinned packages, or only the specified (pinned) packages if
+  *`formula`* or *`cask`* are provided. See also `pin`, `unpin`.
 
 `--installed-on-request`
 
 : List the formulae installed on request.
 
-`--installed-as-dependency`
+`--no-installed-on-request`
 
-: List the formulae installed as dependencies.
+: List the formulae not installed on request (i.e. installed as dependencies).
 
 `--poured-from-bottle`
 
@@ -1118,16 +1670,17 @@ packages.
 
 : Only migrate casks.
 
-### `missing` \[`--hide=`\] \[*`formula`* ...\]
+### `missing` \[`--hide=`\] \[*`formula`*\|*`cask`* ...\]
 
-Check the given *`formula`* kegs for missing dependencies. If no *`formula`* are
-provided, check all kegs. Will exit with a non-zero status if any kegs are found
-to be missing dependencies.
+Check the given *`formula`* kegs and *`cask`* installations for missing
+dependencies. If no *`formula`* or *`cask`* are provided, check all kegs and
+casks. Will exit with a non-zero status if any kegs or casks are found to be
+missing dependencies.
 
 `--hide`
 
 : Act as if none of the specified *`hidden`* are installed. *`hidden`* should be
-  a comma-separated list of formulae.
+  a comma-separated list of formulae or casks.
 
 ### `nodenv-sync`
 
@@ -1137,7 +1690,7 @@ Create symlinks for Homebrew's installed NodeJS versions in
 Note that older version symlinks will also be created so e.g. NodeJS 19.1.0 will
 also be symlinked to 19.0.0.
 
-### `options` \[*`options`*\] \[*`formula`* ...\]
+### `options` \[`--compact`\] \[`--installed`\] \[*`formula`* ...\]
 
 Show install options specific to *`formula`*.
 
@@ -1148,15 +1701,6 @@ Show install options specific to *`formula`*.
 `--installed`
 
 : Show options for formulae that are currently installed.
-
-`--eval-all`
-
-: Evaluate all available formulae and casks, whether installed or not, to show
-  their options. Enabled by default if `$HOMEBREW_EVAL_ALL` is set.
-
-`--command`
-
-: Show options for the specified *`command`*.
 
 ### `outdated` \[*`options`*\] \[*`formula`*\|*`cask`* ...\]
 
@@ -1186,6 +1730,11 @@ otherwise.
   deprecated and is currently the default if no version is specified. `v2`
   prints outdated formulae and casks.
 
+`--minimum-version`
+
+: Only list a named formula or cask with an installed version below the given
+  minimum version.
+
 `--fetch-HEAD`
 
 : Fetch the upstream repository to detect if the HEAD installation of the
@@ -1194,8 +1743,9 @@ otherwise.
 
 `-g`, `--greedy`
 
-: Also include outdated casks with `auto_updates true` or `version :latest`.
-  Enabled by default if `$HOMEBREW_UPGRADE_GREEDY` is set.
+: Also include outdated casks with `version :latest` and `auto_updates true`
+  casks that would otherwise be skipped. Enabled by default if
+  `$HOMEBREW_UPGRADE_GREEDY` is set.
 
 `--greedy-latest`
 
@@ -1203,15 +1753,25 @@ otherwise.
 
 `--greedy-auto-updates`
 
-: Also include outdated casks including those with `auto_updates true`.
+: Also include outdated `auto_updates true` casks that would otherwise be
+  skipped.
 
-### `pin` *`installed_formula`* \[...\]
+### `pin` \[`--formula`\] \[`--cask`\] *`installed_formula`*\|*`installed_cask`* \[...\]
 
-Pin the specified *`formula`*, preventing them from being upgraded when issuing
-the `brew upgrade` *`formula`* command. See also `unpin`.
+Pin the specified package, preventing it from being upgraded when issuing the
+`brew upgrade` *`formula`* or *`cask`* command. See also `unpin`.
 
 *Note:* Other packages which depend on newer versions of a pinned formula might
-not install or run correctly.
+not install or run correctly. Pinned casks with `auto_updates true` may update
+themselves outside Homebrew.
+
+`--formula`
+
+: Treat all named arguments as formulae.
+
+`--cask`
+
+: Treat all named arguments as casks.
 
 ### `postinstall`, `post_install` *`installed_formula`* \[...\]
 
@@ -1256,11 +1816,6 @@ all items or checking if any current formulae/casks have Ruby issues.
 
 : Syntax-check all of Homebrew's Ruby files (if no *`tap`* is passed).
 
-`--eval-all`
-
-: Evaluate all available formulae and casks, whether installed or not. Enabled
-  by default if `$HOMEBREW_EVAL_ALL` is set.
-
 `--no-simulate`
 
 : Don't simulate other system configurations when checking formulae and casks.
@@ -1297,11 +1852,10 @@ for the reinstalled formulae or, every 30 days, for all formulae.
 
 : Print the verification and post-install steps.
 
-`--ask`
+`-y`, `--no-ask`
 
-: Ask for confirmation before downloading and upgrading formulae. Print
-  download, install and net install sizes of bottles and dependencies. Enabled
-  by default if `$HOMEBREW_ASK` is set.
+: Do not ask for confirmation before downloading and reinstalling. Ask mode is
+  the default. Enabled by default if `$HOMEBREW_NO_ASK` is set.
 
 `--formula`
 
@@ -1340,13 +1894,11 @@ for the reinstalled formulae or, every 30 days, for all formulae.
 
 `--[no-]binaries`
 
-: Disable/enable linking of helper executables (default: enabled). Enabled by
-  default if `$HOMEBREW_CASK_OPTS_BINARIES` is set.
+: Disable/enable linking of helper executables (default: enabled).
 
 `--require-sha`
 
-: Require all casks to have a checksum. Enabled by default if
-  `$HOMEBREW_CASK_OPTS_REQUIRE_SHA` is set.
+: Require all casks to have a checksum.
 
 `--adopt`
 
@@ -1361,6 +1913,17 @@ for the reinstalled formulae or, every 30 days, for all formulae.
 
 : For use with `brew reinstall --cask`. Remove all files associated with a cask.
   *May remove files which are shared between applications.*
+
+### `sandbox-exec` \[`--deny-network`\] *`writable-path`* \[`--`\] *`command`* \[*`args`* ...\]
+
+Run *`command`* in Homebrew's sandbox, allowing writes to *`writable-path`* and
+Homebrew's temporary and cache directories.
+
+Example: `brew sandbox-exec . -- make test`
+
+`--deny-network`
+
+: Deny network access from inside the sandbox.
 
 ### `search`, `-S` \[*`options`*\] *`text`*\|`/`*`regex`*`/` \[...\]
 
@@ -1379,11 +1942,6 @@ Perform a substring search of cask tokens and formula names for *`text`*. If
 
 : Search for formulae with a description matching *`text`* and casks with a name
   or description matching *`text`*.
-
-`--eval-all`
-
-: Evaluate all available formulae and casks, whether installed or not, to search
-  their descriptions. Enabled by default if `$HOMEBREW_EVAL_ALL` is set.
 
 `--pull-request`
 
@@ -1442,51 +2000,14 @@ If `sudo` is passed, operate on `/Library/LaunchDaemons` or
 `/usr/lib/systemd/system` (started at boot). Otherwise, operate on
 `~/Library/LaunchAgents` or `~/.config/systemd/user` (started at login).
 
-\[`sudo`\] `brew services` \[`list`\] \[`--json`\] \[`--debug`\]
+`--sudo-service-user`
 
-: List information about all managed services for the current user (or root).
-  Provides more output from Homebrew and `launchctl`(1) or `systemctl`(1) if run
-  with `--debug`.
-
-\[`sudo`\] `brew services info` (*`formula`*\|`--all`) \[`--json`\]
-
-: List all managed services for the current user (or root).
-
-\[`sudo`\] `brew services run` (*`formula`*\|`--all`) \[`--file=`\]
-
-: Run the service *`formula`* without registering to launch at login (or boot).
-
-\[`sudo`\] `brew services start` (*`formula`*\|`--all`) \[`--file=`\]
-
-: Start the service *`formula`* immediately and register it to launch at login
-  (or boot).
+: When run as root on macOS, run the service(s) as this user.
 
 \[`sudo`\] `brew services stop` \[`--keep`\] \[`--no-wait`\|`--max-wait=`\] (*`formula`*\|`--all`)
 
 : Stop the service *`formula`* immediately and unregister it from launching at
   login (or boot), unless `--keep` is specified.
-
-\[`sudo`\] `brew services kill` (*`formula`*\|`--all`)
-
-: Stop the service *`formula`* immediately but keep it registered to launch at
-  login (or boot).
-
-\[`sudo`\] `brew services restart` (*`formula`*\|`--all`) \[`--file=`\]
-
-: Stop (if necessary) and start the service *`formula`* immediately and register
-  it to launch at login (or boot).
-
-\[`sudo`\] `brew services cleanup`
-
-: Remove all unused services.
-
-`--file`
-
-: Use the service file from this location to `start` the service.
-
-`--sudo-service-user`
-
-: When run as root on macOS, run the service(s) as this user.
 
 `--max-wait`
 
@@ -1503,16 +2024,92 @@ If `sudo` is passed, operate on `/Library/LaunchDaemons` or
 
 `--all`
 
-: Run *`subcommand`* on all services.
+: Stop all services and unregister them from launching at login (or boot),
+  unless `--keep` is specified.
+
+\[`sudo`\] `brew services start` (*`formula`*\|`--all`) \[`--file=`\]
+
+: Start the service *`formula`* immediately and register it to launch at login
+  (or boot).
+
+`--file`
+
+: Use the service file from this location to `start` the service.
+
+`--all`
+
+: Start all services and register them to launch at login (or boot).
+
+\[`sudo`\] `brew services run` (*`formula`*\|`--all`) \[`--file=`\]
+
+: Run the service *`formula`* without registering to launch at login (or boot).
+
+`--file`
+
+: Use the service file from this location to `run` the service.
+
+`--all`
+
+: Run all services without registering them to launch at login (or boot).
+
+\[`sudo`\] `brew services restart` (*`formula`*\|`--all`) \[`--file=`\]
+
+: Stop (if necessary) and start the service *`formula`* immediately and register
+  it to launch at login (or boot).
+
+`--file`
+
+: Use the service file from this location to `start` the service.
+
+`--all`
+
+: Restart all services.
+
+\[`sudo`\] `brew services` \[`list`\] \[`--json`\] \[`--debug`\]
+
+: List information about all managed services for the current user (or root).
+  Provides more output from Homebrew and `launchctl`(1) or `systemctl`(1) if run
+  with `--debug`.
 
 `--json`
 
 : Output as JSON.
 
+\[`sudo`\] `brew services kill` (*`formula`*\|`--all`)
+
+: Stop the service *`formula`* immediately but keep it registered to launch at
+  login (or boot).
+
+`--all`
+
+: Stop all services immediately but keep them registered to launch at login (or
+  boot).
+
+\[`sudo`\] `brew services info` (*`formula`*\|`--all`) \[`--json`\]
+
+: List all managed services for the current user (or root).
+
+`--all`
+
+: List all managed services.
+
+`--json`
+
+: Output as JSON.
+
+\[`sudo`\] `brew services cleanup`
+
+: Remove all unused services.
+
 ### `setup-ruby` \[*`command`* ...\]
 
 Installs and configures Homebrew's Ruby. If `command` is passed, it will only
 run Bundler if necessary for that command.
+
+### `setup-sandbox`
+
+Run any necessary commands to setup the Homebrew sandbox. Must be run with
+`sudo`. Currently a no-op on non-Linux.
 
 ### `shellenv` \[*`shell`* ...\]
 
@@ -1526,9 +2123,8 @@ are also exported to avoid querying them multiple times. To help guarantee
 idempotence, this command produces no output when Homebrew's `bin` and `sbin`
 directories are first and second respectively in your `$PATH`. Consider adding
 evaluation of this command's output to your dotfiles (e.g. `~/.bash_profile` or
-~/.zprofile` on macOS and ~/.bashrc` or ~/.zshrc` on Linux)
-with e.g.:
-  `eval "$(brew shellenv zsh)"` or `eval "$(brew shellenv bash)"\`
+`~/.zprofile` on macOS and `~/.bashrc` or `~/.zshrc` on Linux) with e.g.: `eval
+"$(brew shellenv zsh)"` or `eval "$(brew shellenv bash)"`
 
 The shell should be specified explicitly with a supported shell name parameter
 but will be detected automatically if not provided (but this may not be
@@ -1591,11 +2187,6 @@ HTTPS, e.g. SSH, git, HTTP, FTP(S), rsync.
 : Add missing symlinks to tap manpages and shell completions. Correct git remote
   refs for any taps where upstream HEAD branch has been renamed.
 
-`--eval-all`
-
-: Evaluate all formulae, casks and aliases in the new tap to check their
-  validity. Enabled by default if `$HOMEBREW_EVAL_ALL` is set.
-
 `-f`, `--force`
 
 : Force install core taps even under API mode.
@@ -1614,6 +2205,33 @@ provided, display brief statistics for all installed taps.
 : Print a JSON representation of *`tap`*. Currently the default and only
   accepted value for *`version`* is `v1`. See the docs for examples of using the
   JSON output: <https://docs.brew.sh/Querying-Brew>
+
+### `trust` \[*`options`*\] \[*`target`* ...\]
+
+Trust non-official tap formulae, casks or commands so Homebrew may load them.
+Trusted entries are stored in `${XDG_CONFIG_HOME}/homebrew/trust.json` if
+`$XDG_CONFIG_HOME` is set or `~/.homebrew/trust.json` otherwise.
+
+`--tap`
+
+: Trust the named tap.
+
+`--formula`
+
+: Trust the named formula.
+
+`--cask`
+
+: Trust the named cask.
+
+`--command`
+
+: Trust the named external command.
+
+`--json`
+
+: Print trusted entries as JSON. A *`version`* number is required. The only
+  accepted value for *`version`* is `v1`.
 
 ### `unalias` *`alias`* \[...\]
 
@@ -1657,10 +2275,18 @@ brew link` *`formula`*
 : List files which would be unlinked without actually unlinking or deleting any
   files.
 
-### `unpin` *`installed_formula`* \[...\]
+### `unpin` \[`--formula`\] \[`--cask`\] *`installed_formula`*\|*`installed_cask`* \[...\]
 
-Unpin *`formula`*, allowing them to be upgraded by `brew upgrade` *`formula`*.
-See also `pin`.
+Unpin the specified package, allowing it to be upgraded by `brew upgrade`
+*`formula`* or *`cask`*. See also `pin`.
+
+`--formula`
+
+: Treat all named arguments as formulae.
+
+`--cask`
+
+: Treat all named arguments as casks.
 
 ### `untap` \[`--force`\] *`tap`* \[...\]
 
@@ -1668,16 +2294,35 @@ Remove a tapped formula repository.
 
 `-f`, `--force`
 
-: Untap even if formulae or casks from this tap are currently installed.
+: Uninstall all formulae and casks from this tap with `--force` before
+  untapping.
+
+### `untrust` \[*`options`*\] \[*`target`* ...\]
+
+Stop trusting non-official tap formulae, casks or commands. Trusted entries are
+stored in `${XDG_CONFIG_HOME}/homebrew/trust.json` if `$XDG_CONFIG_HOME` is set
+or `~/.homebrew/trust.json` otherwise.
+
+`--tap`
+
+: Untrust the named tap.
+
+`--formula`
+
+: Untrust the named formula.
+
+`--cask`
+
+: Untrust the named cask.
+
+`--command`
+
+: Untrust the named external command.
 
 ### `update`, `up` \[*`options`*\]
 
 Fetch the newest version of Homebrew and all formulae from GitHub using `git`(1)
 and perform any necessary migrations.
-
-`--merge`
-
-: Use `git merge` to apply updates (rather than `git rebase`).
 
 `--auto-update`
 
@@ -1710,10 +2355,10 @@ Fetch and reset Homebrew and all tap repositories (or any specified
 
 ### `upgrade` \[*`options`*\] \[*`installed_formula`*\|*`installed_cask`* ...\]
 
-Upgrade outdated casks and outdated, unpinned formulae using the same options
-they were originally installed with, plus any appended brew formula options. If
-*`cask`* or *`formula`* are specified, upgrade only the given *`cask`* or
-*`formula`* kegs (unless they are pinned; see `pin`, `unpin`).
+Upgrade outdated, unpinned packages using the same options they were originally
+installed with, plus any appended brew formula options. If *`cask`* or
+*`formula`* are specified, upgrade only the given *`cask`* or *`formula`*
+(unless they are pinned; see `pin`, `unpin`).
 
 Unless `$HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK` is set, `brew upgrade` or `brew
 reinstall` will be run for outdated dependents and dependents with broken
@@ -1746,11 +2391,15 @@ for the upgraded formulae or, every 30 days, for all formulae.
 
 : Show what would be upgraded, but do not actually upgrade anything.
 
-`--ask`
+`--minimum-version`
 
-: Ask for confirmation before downloading and upgrading formulae. Print
-  download, install and net install sizes of bottles and dependencies. Enabled
-  by default if `$HOMEBREW_ASK` is set.
+: Only upgrade a named formula or cask with an installed version below the given
+  minimum version.
+
+`-y`, `--no-ask`
+
+: Do not ask for confirmation before downloading and upgrading. Ask mode is the
+  default. Enabled by default if `$HOMEBREW_NO_ASK` is set.
 
 `--formula`
 
@@ -1799,10 +2448,16 @@ for the upgraded formulae or, every 30 days, for all formulae.
 
 : Skip installing cask dependencies.
 
+`--no-quit`
+
+: Prevent running cask applications from being quit during upgrade. Enabled by
+  default if `$HOMEBREW_NO_UPGRADE_QUIT_CASKS` is set.
+
 `-g`, `--greedy`
 
-: Also include casks with `auto_updates true` or `version :latest`. Enabled by
-  default if `$HOMEBREW_UPGRADE_GREEDY` is set.
+: Also include casks with `version :latest` and `auto_updates true` casks that
+  would otherwise be skipped. Enabled by default if `$HOMEBREW_UPGRADE_GREEDY`
+  is set.
 
 `--greedy-latest`
 
@@ -1810,17 +2465,15 @@ for the upgraded formulae or, every 30 days, for all formulae.
 
 `--greedy-auto-updates`
 
-: Also include casks with `auto_updates true`.
+: Also include `auto_updates true` casks that would otherwise be skipped.
 
 `--[no-]binaries`
 
-: Disable/enable linking of helper executables (default: enabled). Enabled by
-  default if `$HOMEBREW_CASK_OPTS_BINARIES` is set.
+: Disable/enable linking of helper executables (default: enabled).
 
 `--require-sha`
 
-: Require all casks to have a checksum. Enabled by default if
-  `$HOMEBREW_CASK_OPTS_REQUIRE_SHA` is set.
+: Require all casks to have a checksum.
 
 ### `uses` \[*`options`*\] *`formula`* \[...\]
 
@@ -1843,11 +2496,6 @@ dependency for their stable builds.
 `--missing`
 
 : Only list formulae and casks that are not currently installed.
-
-`--eval-all`
-
-: Evaluate all available formulae and casks, whether installed or not, to show
-  their dependents. Enabled by default if `$HOMEBREW_EVAL_ALL` is set.
 
 `--include-implicit`
 
@@ -1878,7 +2526,44 @@ dependency for their stable builds.
 
 : Include only casks.
 
-### `which-formula` \[`--explain`\] \[`--skip-update`\] *`command`* \[...\]
+### `version-install` *`formula`*\[@*`version`*\] \[*`version`*\]
+
+Extract a specific *`version`* of *`formula`* into a personal tap and install
+it. The default tap is *`user`*/versions. *`user`* uses the GitHub username if
+available and the local username otherwise.
+
+### `vulns` \[*`options`*\] \[*`formula`* ...\]
+
+Check *`formula`* for known security vulnerabilities using the OSV.dev database.
+
+With no arguments, all installed formulae are checked.
+
+`-d`, `--deps`
+
+: Also check the dependencies of named formulae.
+
+`--no-ignore-patches`
+
+: Report vulnerabilities even when a formula patch resolves them.
+
+`--brewfile`
+
+: Check formulae listed in a Brewfile. Defaults to `./Brewfile`; use
+  `--brewfile=`*`path`* to specify another.
+
+`-s`, `--severity`
+
+: Only report findings at or above: `low`, `medium`, `high`, `critical`.
+
+`-m`, `--max-summary`
+
+: Truncate summaries to *`n`* characters (default 60, 0 for no limit).
+
+`-j`, `--json`
+
+: Output JSON.
+
+### `which-formula` \[`--explain`\] *`command`* \[...\]
 
 Show which formula(e) provides the given command.
 
@@ -1886,11 +2571,6 @@ Show which formula(e) provides the given command.
 
 : Output explanation of how to get *`command`* by installing one of the
   providing formulae.
-
-`--skip-update`
-
-: Skip updating the executables database if any version exists on disk, no
-  matter how old.
 
 ### `--cache` \[*`options`*\] \[*`formula`*\|*`cask`* ...\]
 
@@ -2033,20 +2713,11 @@ checks. Will exit with a non-zero status if any errors are found.
 
 : Only check formulae and casks that are currently installed.
 
-`--eval-all`
-
-: Evaluate all available formulae and casks, whether installed or not, to audit
-  them. Enabled by default if `$HOMEBREW_EVAL_ALL` is set.
-
 `--new`
 
 : Run various additional style checks to determine if a new formula or cask is
   eligible for Homebrew. This should be used when creating new formulae or casks
   and implies `--strict` and `--online`.
-
-`--[no-]signing`
-
-: Audit for app signatures, which are required by macOS on ARM.
 
 `--changed`
 
@@ -2158,10 +2829,6 @@ at its original value, while `--no-rebuild` will remove it.
 
 : Don't try to create an `all` bottle or stop a no-change upload.
 
-`--committer`
-
-: Specify a committer name and email in `git`'s standard author format.
-
 `--root-url`
 
 : Use the specified *`URL`* as the root of the bottle's URL instead of
@@ -2197,11 +2864,6 @@ displays whether a pull request has been opened with the URL.
 `--cask`
 
 : Check only casks.
-
-`--eval-all`
-
-: Evaluate all formulae and casks. Enabled by default if `$HOMEBREW_EVAL_ALL` is
-  set.
 
 `--repology`
 
@@ -2295,6 +2957,23 @@ supplied by the user.
 `--fork-org`
 
 : Use the specified GitHub organization for forking.
+
+### `bump-compatibility-version` \[*`options`*\] *`formula`* \[...\]
+
+Create a commit to increment the compatibility\_version of *`formula`*. If no
+compatibility\_version is present, "compatibility\_version 1" will be added.
+
+`-n`, `--dry-run`
+
+: Print what would be done rather than doing it.
+
+`--write-only`
+
+: Make the expected file modifications without taking any Git actions.
+
+`--message`
+
+: Append *`message`* to the default commit message.
 
 ### `bump-formula-pr` \[*`options`*\] \[*`formula`*\]
 
@@ -2458,14 +3137,15 @@ Display the source of a *`formula`* or *`cask`*.
 
 : Treat all named arguments as casks.
 
-### `contributions` \[`--user=`\] \[`--repositories=`\] \[`--quarter=`\] \[`--from=`\] \[`--to=`\] \[`--csv`\]
+### `contributions` \[`--user=`\] \[`--repositories=`\] \[`--quarter=`\] \[`--from=`\] \[`--to=`\] \[`--csv`\] \[`--maintainer-report-csv=`\]
 
 Summarise contributions to Homebrew repositories.
 
 `--user`
 
 : Specify a comma-separated list of GitHub usernames or email addresses to find
-  contributions from. Omitting this flag searches Homebrew maintainers.
+  contributions from. Omitting this flag searches Homebrew maintainers. With
+  `--maintainer-report-csv`, only matching quarter-end Maintainers are included.
 
 `--repositories`
 
@@ -2501,6 +3181,23 @@ Summarise contributions to Homebrew repositories.
 `--csv`
 
 : Print a CSV of contributions across repositories over the time period.
+
+`--maintainer-report-csv`
+
+: Print a CSV of Maintainer and Lead Maintainer activity criteria using fetched
+  Git histories and GitHub's existing approved-review search for the Homebrew
+  governance quarter, for example `--maintainer-report-csv=2026-2`. Also write
+  it in the current directory as `brew-contributions-FROM-to-TO.csv`, or
+  `brew-contributions-FROM-to-TO-USER.csv` when filtered with `--user`. Only
+  Maintainers listed at the end of that quarter are included. The `new role`
+  value must show a downgrade for two consecutive quarters before a downgrade is
+  applied. Review searches return at most 100 results and other counts are
+  capped at 500 per repository and contribution type. Repository-scoped
+  follow-up searches ensure role activity checks remain accurate when a count is
+  capped. Completed-period GitHub searches are cached in Homebrew's cache and
+  removed by normal cache pruning. `YEAR-1` is December of the previous year
+  through February, `YEAR-2` is March through May, `YEAR-3` is June through
+  August and `YEAR-4` is September through November.
 
 ### `create` \[*`options`*\] *`URL`*
 
@@ -2604,51 +3301,6 @@ For example: `brew debugger -- list --formula`.
 
 : Start remote debugging over a Unix socket.
 
-### `dispatch-build-bottle` \[*`options`*\] *`formula`* \[...\]
-
-Build bottles for these formulae with GitHub Actions.
-
-`--tap`
-
-: Target tap repository (default: `homebrew/core`).
-
-`--timeout`
-
-: Build timeout (in minutes, default: 60).
-
-`--issue`
-
-: If specified, post a comment to this issue number if the job fails.
-
-`--macos`
-
-: macOS version (or comma-separated list of versions) the bottle should be built
-  for.
-
-`--workflow`
-
-: Dispatch specified workflow (default: `dispatch-build-bottle.yml`).
-
-`--upload`
-
-: Upload built bottles.
-
-`--linux`
-
-: Dispatch bottle for Linux x86\_64 (using GitHub runners).
-
-`--linux-arm64`
-
-: Dispatch bottle for Linux arm64 (using GitHub runners).
-
-`--linux-self-hosted`
-
-: Dispatch bottle for Linux x86\_64 (using self-hosted runner).
-
-`--linux-wheezy`
-
-: Use Debian Wheezy container for building the bottle on Linux.
-
 ### `edit` \[*`options`*\] \[*`formula`*\|*`cask`*\|*`tap`* ...\]
 
 Open a *`formula`*, *`cask`* or *`tap`* in the editor set by `$EDITOR` or
@@ -2693,99 +3345,6 @@ form of *`user`*`/`*`repo`*`/`*`formula`*.
 
 Display the path where *`formula`* is located.
 
-### `formula-analytics`
-
-Query Homebrew's analytics.
-
-`--days-ago`
-
-: Query from the specified days ago until the present. The default is 30 days.
-
-`--install`
-
-: Output the number of specifically requested installations or installation as
-  dependencies of formulae. This is the default.
-
-`--install-on-request`
-
-: Output the number of specifically requested installations of formulae.
-
-`--cask-install`
-
-: Output the number of installations of casks.
-
-`--build-error`
-
-: Output the number of build errors for formulae.
-
-`--os-version`
-
-: Output the number of events by OS name and version.
-
-`--homebrew-devcmdrun-developer`
-
-: Output the number of devcmdrun/HOMEBREW\_DEVELOPER events.
-
-`--homebrew-os-arch-ci`
-
-: Output the number of OS/Architecture/CI events.
-
-`--homebrew-prefixes`
-
-: Output Homebrew prefixes.
-
-`--homebrew-versions`
-
-: Output Homebrew versions.
-
-`--brew-command-run`
-
-: Output `brew` commands run.
-
-`--brew-command-run-options`
-
-: Output `brew` commands run with options.
-
-`--brew-test-bot-test`
-
-: Output `brew test-bot` steps run.
-
-`--json`
-
-: Output JSON. This is required: plain text support has been removed.
-
-`--all-core-formulae-json`
-
-: Output a different JSON format containing the JSON data for all
-  Homebrew/homebrew-core formulae.
-
-`--setup`
-
-: Install the necessary gems, require them and exit without running a query.
-
-### `generate-analytics-api`
-
-Generates analytics API data files for <https://formulae.brew.sh>. The generated
-files are written to the current directory.
-
-### `generate-cask-api` \[`--dry-run`\]
-
-Generate `homebrew/cask` API data files for <https://formulae.brew.sh>. The
-generated files are written to the current directory.
-
-`-n`, `--dry-run`
-
-: Generate API data without writing it to files.
-
-### `generate-formula-api` \[`--dry-run`\]
-
-Generate `homebrew/core` API data files for <https://formulae.brew.sh>. The
-generated files are written to the current directory.
-
-`-n`, `--dry-run`
-
-: Generate API data without writing it to files.
-
 ### `generate-man-completions` \[`--no-exit-code`\]
 
 Generate Homebrew's manpages and shell completions.
@@ -2793,6 +3352,25 @@ Generate Homebrew's manpages and shell completions.
 `--no-exit-code`
 
 : Exit with code 0 even if no changes were made.
+
+### `generate-zap` \[`--name`\] *`cask_or_name`*
+
+Generate a `zap` stanza for a cask by scanning the system for associated files
+and directories.
+
+Accepts a cask token (e.g. `firefox`) or, with `--name`, a raw application name
+string (e.g. `Firefox`). When a cask token is given, the application name is
+resolved from the cask's `app` artifact.
+
+The target application should have been launched at least once so that
+preference files and caches exist on disk.
+
+Outputs `trash`, `delete`, and `rmdir` directives suitable for pasting into a
+cask definition.
+
+`--name`
+
+: Treat the argument as a raw application name instead of a cask token.
 
 ### `install-bundler-gems` \[`--groups=`\] \[`--add-groups=`\]
 
@@ -2808,7 +3386,7 @@ Install Homebrew's Bundler gems.
 : Installs the specified comma-separated list of gem groups, in addition to
   those already installed.
 
-### `irb` \[`--examples`\] \[`--pry`\]
+### `irb` \[`--examples`\]
 
 Enter the interactive Homebrew Ruby shell.
 
@@ -2816,14 +3394,10 @@ Enter the interactive Homebrew Ruby shell.
 
 : Show several examples.
 
-`--pry`
-
-: Use Pry instead of IRB. Enabled by default if `$HOMEBREW_PRY` is set.
-
 ### `lgtm` \[`--online`\]
 
-Run `brew typecheck`, `brew style --changed` and `brew tests --changed` in one
-go.
+Run `brew typecheck`, `brew style --changed` and the relevant `brew tests`,
+`brew audit` and `brew test` checks in one go.
 
 `--online`
 
@@ -2858,7 +3432,9 @@ provided, check all kegs. Raises an error if run on uninstalled formulae.
 
 Check for newer versions of formulae and/or casks from upstream. If no formula
 or cask argument is passed, the list of formulae and casks to check is taken
-from `$HOMEBREW_LIVECHECK_WATCHLIST` or `~/.homebrew/livecheck_watchlist.txt`.
+from `$HOMEBREW_LIVECHECK_WATCHLIST` or
+`${XDG_CONFIG_HOME}/homebrew/livecheck_watchlist.txt` if `$XDG_CONFIG_HOME` is
+set or `~/.homebrew/livecheck_watchlist.txt` otherwise.
 
 `--full-name`
 
@@ -2868,11 +3444,6 @@ from `$HOMEBREW_LIVECHECK_WATCHLIST` or `~/.homebrew/livecheck_watchlist.txt`.
 
 : Check formulae and casks within the given tap, specified as
   *`user`*`/`*`repo`*.
-
-`--eval-all`
-
-: Evaluate all available formulae and casks, whether installed or not, to check
-  them.
 
 `--installed`
 
@@ -2912,207 +3483,7 @@ from `$HOMEBREW_LIVECHECK_WATCHLIST` or `~/.homebrew/livecheck_watchlist.txt`.
 : Include packages that are autobumped by BrewTestBot. By default these are
   skipped.
 
-### `pr-automerge` \[*`options`*\]
-
-Find pull requests that can be automatically merged using `brew pr-publish`.
-
-`--tap`
-
-: Target tap repository (default: `homebrew/core`).
-
-`--workflow`
-
-: Workflow file to use with `brew pr-publish`.
-
-`--with-label`
-
-: Pull requests must have this label.
-
-`--without-labels`
-
-: Pull requests must not have these labels (default: `do not merge`, `new
-  formula`, `automerge-skip`, `pre-release`, `CI-published-bottle-commits`).
-
-`--without-approval`
-
-: Pull requests do not require approval to be merged.
-
-`--publish`
-
-: Run `brew pr-publish` on matching pull requests.
-
-`--autosquash`
-
-: Instruct `brew pr-publish` to automatically reformat and reword commits in the
-  pull request to the preferred format.
-
-`--ignore-failures`
-
-: Include pull requests that have failing status checks.
-
-### `pr-publish` \[*`options`*\] *`pull_request`* \[...\]
-
-Publish bottles for a pull request with GitHub Actions. Requires write access to
-the repository.
-
-`--autosquash`
-
-: If supported on the target tap, automatically reformat and reword commits to
-  our preferred format.
-
-`--large-runner`
-
-: Run the upload job on a large runner.
-
-`--branch`
-
-: Branch to use the workflow from (default: `main`).
-
-`--message`
-
-: Message to include when autosquashing revision bumps, deletions and rebuilds.
-
-`--tap`
-
-: Target tap repository (default: `homebrew/core`).
-
-`--workflow`
-
-: Target workflow filename (default: `publish-commit-bottles.yml`).
-
-### `pr-pull` \[*`options`*\] *`pull_request`* \[...\]
-
-Download and publish bottles and apply the bottle commit from a pull request
-with artifacts generated by GitHub Actions. Requires write access to the
-repository.
-
-`--no-upload`
-
-: Download the bottles but don't upload them.
-
-`--no-commit`
-
-: Do not generate a new commit before uploading.
-
-`--no-cherry-pick`
-
-: Do not cherry-pick commits from the pull request branch.
-
-`-n`, `--dry-run`
-
-: Print what would be done rather than doing it.
-
-`--clean`
-
-: Do not amend the commits from pull requests.
-
-`--keep-old`
-
-: If the formula specifies a rebuild version, attempt to preserve its value in
-  the generated DSL.
-
-`--autosquash`
-
-: Automatically reformat and reword commits in the pull request to our preferred
-  format.
-
-`--branch-okay`
-
-: Do not warn if pulling to a branch besides the repository default (useful for
-  testing).
-
-`--resolve`
-
-: When a patch fails to apply, leave in progress and allow user to resolve,
-  instead of aborting.
-
-`--warn-on-upload-failure`
-
-: Warn instead of raising an error if the bottle upload fails. Useful for
-  repairing bottle uploads that previously failed.
-
-`--retain-bottle-dir`
-
-: Does not clean up the tmp directory for the bottle so it can be used later.
-
-`--committer`
-
-: Specify a committer name and email in `git`'s standard author format.
-
-`--message`
-
-: Message to include when autosquashing revision bumps, deletions and rebuilds.
-
-`--artifact-pattern`
-
-: Download artifacts with the specified pattern (default: `bottles{,_*}`).
-
-`--tap`
-
-: Target tap repository (default: `homebrew/core`).
-
-`--root-url`
-
-: Use the specified *`URL`* as the root of the bottle's URL instead of
-  Homebrew's default.
-
-`--root-url-using`
-
-: Use the specified download strategy class for downloading the bottle's URL
-  instead of Homebrew's default.
-
-`--workflows`
-
-: Retrieve artifacts from the specified workflow (default: `tests.yml`). Can be
-  a comma-separated list to include multiple workflows.
-
-`--ignore-missing-artifacts`
-
-: Comma-separated list of workflows which can be ignored if they have not been
-  run.
-
-### `pr-upload` \[*`options`*\]
-
-Apply the bottle commit and publish bottles to a host.
-
-`--keep-old`
-
-: If the formula specifies a rebuild version, attempt to preserve its value in
-  the generated DSL. When using GitHub Packages, this also appends the manifest
-  to the existing list.
-
-`-n`, `--dry-run`
-
-: Print what would be done rather than doing it.
-
-`--no-commit`
-
-: Do not generate a new commit before uploading.
-
-`--warn-on-upload-failure`
-
-: Warn instead of raising an error if the bottle upload fails. Useful for
-  repairing bottle uploads that previously failed.
-
-`--upload-only`
-
-: Skip running `brew bottle` before uploading.
-
-`--committer`
-
-: Specify a committer name and email in `git`'s standard author format.
-
-`--root-url`
-
-: Use the specified *`URL`* as the root of the bottle's URL instead of
-  Homebrew's default.
-
-`--root-url-using`
-
-: Use the specified download strategy class for downloading the bottle's URL
-  instead of Homebrew's default.
-
-### `prof` \[`--stackprof`\] \[`--vernier`\] *`command`* \[...\]
+### `prof` \[*`options`*\] *`command`* \[...\]
 
 Run Homebrew with a Ruby profiler. For example, `brew prof readall`.
 
@@ -3124,33 +3495,9 @@ Run Homebrew with a Ruby profiler. For example, `brew prof readall`.
 
 : Use `vernier` instead of `ruby-prof` (the default).
 
-### `release` \[*`options`*\]
+`--timings`
 
-Create a new draft Homebrew/brew release with the appropriate version number and
-release notes.
-
-By default, `brew release` will bump the patch version number. Pass `--major` or
-`--minor` to bump the major or minor version numbers, respectively. The command
-will fail if the previous major or minor release was made less than one month
-ago.
-
-Without `--force`, this command will just output the release notes without
-creating the release or triggering the workflow.
-
-*Note:* Requires write access to the Homebrew/brew repository.
-
-`--major`
-
-: Create a major release.
-
-`--minor`
-
-: Create a minor release.
-
-`--force`
-
-: Actually create the release and trigger the workflow. Without this, just show
-  what would be done.
+: Record machine-readable timings for Homebrew command phases.
 
 ### `rubocop`
 
@@ -3220,6 +3567,11 @@ core code and all formulae.
 
 : Fix style violations automatically using RuboCop's auto-correct feature.
 
+`--todo`
+
+: Add `rubocop:todo` comments for RuboCop violations that remain after
+  auto-correction. Requires `--fix`.
+
 `--reset-cache`
 
 : Reset the RuboCop cache.
@@ -3252,15 +3604,11 @@ Generate the template files for a new tap.
 
 `--no-git`
 
-: Don't initialize a Git repository for the tap.
-
-`--pull-label`
-
-: Label name for pull requests ready to be pulled (default: `pr-pull`).
+: Don't initialise a Git repository for the tap.
 
 `--branch`
 
-: Initialize Git repository and setup GitHub Actions workflows with the
+: Initialise a Git repository and set up GitHub Actions workflows with the
   specified branch name (default: `main`).
 
 `--github-packages`
@@ -3402,10 +3750,6 @@ and Linux workers.
 `--skip-livecheck`
 
 : Don't test livecheck.
-
-`--skip-recursive-dependents`
-
-: Only test the direct dependents.
 
 `--skip-checksum-only-audit`
 
@@ -3599,11 +3943,6 @@ Show the unbottled dependents of formulae.
 
 : Print the `homebrew/core` commits where bottles were lost in the last week.
 
-`--eval-all`
-
-: Evaluate all available formulae and casks, whether installed or not, to check
-  them. Enabled by default if `$HOMEBREW_EVAL_ALL` is set.
-
 ### `unpack` \[*`options`*\] *`formula`*\|*`cask`* \[...\]
 
 Unpack the files for the *`formula`* or *`cask`* into subdirectories of the
@@ -3634,25 +3973,13 @@ current working directory.
 
 : Treat all named arguments as casks.
 
-### `update-license-data`
-
-Update SPDX license data in the Homebrew repository.
-
-### `update-maintainers`
-
-Update the list of maintainers in the `Homebrew/brew` README.
-
-### `update-perl-resources` \[*`options`*\] *`formula`* \[...\]
+### `update-perl-resources` \[`--print-only`\] \[`--ignore-errors`\] *`formula`* \[...\]
 
 Update versions for CPAN resource blocks in *`formula`*.
 
 `-p`, `--print-only`
 
 : Print the updated resource blocks instead of changing *`formula`*.
-
-`-s`, `--silent`
-
-: Suppress any output.
 
 `--ignore-errors`
 
@@ -3666,10 +3993,6 @@ Update versions for PyPI resource blocks in *`formula`*.
 
 : Print the updated resource blocks instead of changing *`formula`*.
 
-`-s`, `--silent`
-
-: Suppress any output.
-
 `--ignore-errors`
 
 : Record all discovered resources, even those that can't be resolved
@@ -3678,6 +4001,12 @@ Update versions for PyPI resource blocks in *`formula`*.
 `--ignore-non-pypi-packages`
 
 : Don't fail if *`formula`* is not a PyPI package.
+
+`--ignore-main-package-cooldown`
+
+: Bypass the release cooldown for *`formula`*'s own package when resolving
+  resources. Its dependencies still respect the cooldown. This option is ignored
+  for official taps.
 
 `--install-dependencies`
 
@@ -3701,10 +4030,6 @@ Update versions for PyPI resource blocks in *`formula`*.
 `--exclude-packages`
 
 : Exclude these packages when finding resources.
-
-### `update-sponsors`
-
-Update the list of GitHub Sponsors in the `Homebrew/brew` README.
 
 ### `update-test` \[*`options`*\]
 
@@ -3776,31 +4101,22 @@ Note that this command depends on the GitHub CLI. Run `brew install gh`.
 
 Database update for `brew which-formula`.
 
-`--stats`
+`--bottle-json-dir`
 
-: Print statistics about the database contents (number of commands and formulae,
-  list of missing formulae).
+: Use generated bottle JSON files in the given directory to update formula
+  entries.
 
-`--commit`
+`--removed-formulae-file`
 
-: Commit the changes using `git`.
+: Remove database entries for formulae listed in the given file.
 
-`--update-existing`
+`--pull-request`
 
-: Update database entries with outdated formula versions.
+: Update entries for formula changes in the given pull request number.
 
-`--install-missing`
+`--repository`
 
-: Install and update formulae that are missing from the database and don't have
-  bottles.
-
-`--eval-all`
-
-: Evaluate all installed taps, rather than just the core tap.
-
-`--max-downloads`
-
-: Specify a maximum number of formulae to download and update.
+: GitHub repository for `--pull-request` (default: `$GITHUB_REPOSITORY`).
 
 `--summary-file`
 
@@ -3814,6 +4130,10 @@ subcommands with the `--cask` switch.
 `--appdir`
 
 : Target location for Applications (default: `/Applications`).
+
+`--appimagedir`
+
+: Target location for AppImages (default: `~/Applications`).
 
 `--keyboard-layoutdir`
 
@@ -3922,9 +4242,9 @@ can take several different forms:
 
 ## SPECIFYING CASKS
 
-Many Homebrew Cask commands accept one or more *`cask`* arguments. These can be
-specified the same way as the *`formula`* arguments described in `SPECIFYING
-FORMULAE` above.
+Many commands that work with casks accept one or more *`cask`* arguments. These
+can be specified the same way as the *`formula`* arguments described in
+`SPECIFYING FORMULAE` above.
 
 ## ENVIRONMENT
 
@@ -3953,7 +4273,9 @@ command execution (e.g. `$(cat file)`).
 
 : A space-separated list of taps. Homebrew will refuse to install a formula
   unless it and all of its dependencies are in an official tap or in a tap on
-  this list.
+  this list. Each entry is a `user/repository` name (which matches only taps
+  using the default GitHub remote) or a remote URL (required to match taps with
+  a custom remote).
 
 `HOMEBREW_API_AUTO_UPDATE_SECS`
 
@@ -3995,11 +4317,6 @@ command execution (e.g. `$(cat file)`).
   are both set, if the request to `$HOMEBREW_ARTIFACT_DOMAIN` fails then
   Homebrew will error rather than trying any other/default URLs.
 
-`HOMEBREW_ASK`
-
-: If set, pass `--ask` to all formulae `brew install`, `brew upgrade` and `brew
-  reinstall` commands.
-
 `HOMEBREW_AUTO_UPDATE_SECS`
 
 : Run `brew update` once every `$HOMEBREW_AUTO_UPDATE_SECS` seconds before some
@@ -4008,6 +4325,14 @@ command execution (e.g. `$(cat file)`).
   
   *Default:* `86400` (24 hours), `3600` (1 hour) if a developer command has been
   run or `300` (5 minutes) if `$HOMEBREW_NO_INSTALL_FROM_API` is set.
+
+`HOMEBREW_AVOID_NESTED_SANDBOXING`
+
+: If set, skip Homebrew's sandbox when it is itself running inside another
+  sandbox, for an unprivileged user outside the default prefix. This trades
+  Homebrew's build-time network and filesystem denial for trust in the outer
+  sandbox. Homebrew errors out if the prefix or group makes skipping
+  unsupported.
 
 `HOMEBREW_BAT`
 
@@ -4027,12 +4352,12 @@ command execution (e.g. `$(cat file)`).
 
 `HOMEBREW_BOTTLE_DOMAIN`
 
-: Use this URL as the download mirror for bottles. If bottles at that URL are
-  temporarily unavailable, the default bottle domain will be used as a fallback
-  mirror. For example, `export HOMEBREW_BOTTLE_DOMAIN=http://localhost:8080`
-  will cause all bottles to download from the prefix `http://localhost:8080/`.
-  If bottles are not available at `$HOMEBREW_BOTTLE_DOMAIN` they will be
-  downloaded from the default bottle domain.
+: Use this URL as the download mirror for bottles and their manifests. If a
+  bottle or manifest is unavailable at the mirror, the default bottle domain
+  will be used as a fallback. Prefer `$HOMEBREW_ARTIFACT_DOMAIN` for a mirror
+  that transparently proxies all Homebrew downloads. For example, `export
+  HOMEBREW_BOTTLE_DOMAIN=http://localhost:8080` will cause all bottles to
+  download from the prefix `http://localhost:8080/`.
   
   *Default:* `https://ghcr.io/v2/homebrew/core`.
 
@@ -4047,6 +4372,131 @@ command execution (e.g. `$(cat file)`).
 : Use this as the browser when opening project homepages.
   
   *Default:* `$BROWSER` or the OS's default browser.
+
+`HOMEBREW_BUNDLE_CLEANUP_NO_BREW`
+
+: If set, `brew bundle cleanup` will not clean up formula dependencies.
+
+`HOMEBREW_BUNDLE_CLEANUP_NO_CARGO`
+
+: If set, `brew bundle cleanup` will not clean up Cargo packages.
+
+`HOMEBREW_BUNDLE_CLEANUP_NO_CASK`
+
+: If set, `brew bundle cleanup` will not clean up cask dependencies.
+
+`HOMEBREW_BUNDLE_CLEANUP_NO_FLATPAK`
+
+: If set, `brew bundle cleanup` will not clean up Flatpak packages.
+
+`HOMEBREW_BUNDLE_CLEANUP_NO_GO`
+
+: If set, `brew bundle cleanup` will not clean up Go packages.
+
+`HOMEBREW_BUNDLE_CLEANUP_NO_KREW`
+
+: If set, `brew bundle cleanup` will not clean up Krew plugins.
+
+`HOMEBREW_BUNDLE_CLEANUP_NO_MAS`
+
+: If set, `brew bundle cleanup` will not clean up Mac App Store dependencies.
+
+`HOMEBREW_BUNDLE_CLEANUP_NO_NPM`
+
+: If set, `brew bundle cleanup` will not clean up npm packages.
+
+`HOMEBREW_BUNDLE_CLEANUP_NO_TAP`
+
+: If set, `brew bundle cleanup` will not clean up tap dependencies.
+
+`HOMEBREW_BUNDLE_CLEANUP_NO_UV`
+
+: If set, `brew bundle cleanup` will not clean up uv tools.
+
+`HOMEBREW_BUNDLE_CLEANUP_NO_VSCODE`
+
+: If set, `brew bundle cleanup` will not clean up VSCode (and forks/variants)
+  extensions.
+
+`HOMEBREW_BUNDLE_CLEANUP_NO_WINGET`
+
+: If set, `brew bundle cleanup` will not clean up WinGet packages.
+
+`HOMEBREW_BUNDLE_DUMP_NO_BREW`
+
+: If set, `brew bundle dump` will not dump formula dependencies.
+
+`HOMEBREW_BUNDLE_DUMP_NO_CARGO`
+
+: If set, `brew bundle dump` will not dump Cargo packages.
+
+`HOMEBREW_BUNDLE_DUMP_NO_CASK`
+
+: If set, `brew bundle dump` will not dump cask dependencies.
+
+`HOMEBREW_BUNDLE_DUMP_NO_FLATPAK`
+
+: If set, `brew bundle dump` will not dump Flatpak packages.
+
+`HOMEBREW_BUNDLE_DUMP_NO_GO`
+
+: If set, `brew bundle dump` will not dump Go packages.
+
+`HOMEBREW_BUNDLE_DUMP_NO_KREW`
+
+: If set, `brew bundle dump` will not dump Krew plugins.
+
+`HOMEBREW_BUNDLE_DUMP_NO_MAS`
+
+: If set, `brew bundle dump` will not dump Mac App Store dependencies.
+
+`HOMEBREW_BUNDLE_DUMP_NO_NPM`
+
+: If set, `brew bundle dump` will not dump npm packages.
+
+`HOMEBREW_BUNDLE_DUMP_NO_TAP`
+
+: If set, `brew bundle dump` will not dump tap dependencies.
+
+`HOMEBREW_BUNDLE_DUMP_NO_UV`
+
+: If set, `brew bundle dump` will not dump uv tools.
+
+`HOMEBREW_BUNDLE_DUMP_NO_VSCODE`
+
+: If set, `brew bundle dump` will not dump VSCode (and forks/variants)
+  extensions.
+
+`HOMEBREW_BUNDLE_DUMP_NO_WINGET`
+
+: If set, `brew bundle dump` will not dump WinGet packages.
+
+`HOMEBREW_BUNDLE_FORCE_INSTALL_CLEANUP`
+
+: If set, run `brew bundle cleanup --force` after `brew bundle install`.
+
+`HOMEBREW_BUNDLE_JOBS`
+
+: Use this value as the number of formula installations to run in parallel for
+  `brew bundle install`. Use `auto` for the number of CPU cores (max 4).
+  
+  *Default:* `auto`.
+
+`HOMEBREW_BUNDLE_NO_DESCRIBE`
+
+: If set, do not enable bundle description comments from
+  `$HOMEBREW_BUNDLE_DESCRIBE` or the default. This does not disable an explicit
+  `--describe`.
+
+`HOMEBREW_BUNDLE_NO_JOBS`
+
+: If set, do not enable parallel jobs from `$HOMEBREW_BUNDLE_JOBS` or its
+  default. This does not disable an explicit `--jobs`.
+
+`HOMEBREW_BUNDLE_SECRETS`
+
+: If set, do not enable the default secret scrubbing. This does not disable an
+  explicit `--no-secrets`.
 
 `HOMEBREW_BUNDLE_USER_CACHE`
 
@@ -4149,7 +4599,7 @@ command execution (e.g. `$(cat file)`).
 
 : Use this base64 encoded username and password for authenticating with a Docker
   registry proxying GitHub Packages. If set to `none`, no authentication header
-  will be sent. This can be used, if remote `$HOMEBREW_BOTTLE_DOMAIN` does not
+  will be sent. This can be used, if remote `$HOMEBREW_ARTIFACT_DOMAIN` does not
   support any authentication. If `$HOMEBREW_DOCKER_REGISTRY_TOKEN` is set, it
   will be used instead.
 
@@ -4183,12 +4633,6 @@ command execution (e.g. `$(cat file)`).
 : If set, `brew *env-sync` will only sync the exact installed versions of
   formulae.
 
-`HOMEBREW_EVAL_ALL`
-
-: If set, `brew` commands evaluate all formulae and casks, executing their
-  arbitrary code, by default without requiring `--eval-all`. Required to cache
-  formula and cask descriptions.
-
 `HOMEBREW_FAIL_LOG_LINES`
 
 : Output this many lines of output on formula `system` failures.
@@ -4217,8 +4661,8 @@ command execution (e.g. `$(cat file)`).
 
 `HOMEBREW_FORBIDDEN_LICENSES`
 
-: A space-separated list of SPDX license identifiers. Homebrew will refuse to
-  install a formula if it or any of its dependencies has a license on this list.
+: A space-separated list of SPDX licence identifiers. Homebrew will refuse to
+  install a formula if it or any of its dependencies has a licence on this list.
 
 `HOMEBREW_FORBIDDEN_OWNER`
 
@@ -4233,7 +4677,9 @@ command execution (e.g. `$(cat file)`).
 `HOMEBREW_FORBIDDEN_TAPS`
 
 : A space-separated list of taps. Homebrew will refuse to install a formula if
-  it or any of its dependencies is in a tap on this list.
+  it or any of its dependencies is in a tap on this list. Each entry is a
+  `user/repository` name (which matches only taps using the default GitHub
+  remote) or a remote URL (required to match taps with a custom remote).
 
 `HOMEBREW_FORBID_CASKS`
 
@@ -4270,6 +4716,11 @@ command execution (e.g. `$(cat file)`).
 
 : If set, require `brew` to be invoked by the value of
   `$HOMEBREW_FORCE_BREW_WRAPPER` for non-trivial `brew` commands.
+
+`HOMEBREW_FORCE_BREW_WRAPPER_HELP_MESSAGE`
+
+: If set, appended to the `$HOMEBREW_FORCE_BREW_WRAPPER` error message to
+  provide additional help or context to the user.
 
 `HOMEBREW_FORCE_VENDOR_RUBY`
 
@@ -4385,6 +4836,11 @@ command execution (e.g. `$(cat file)`).
 : If set, do not send analytics. Google Analytics were destroyed. For more
   information, see: <https://docs.brew.sh/Analytics>
 
+`HOMEBREW_NO_ASK`
+
+: If set, do not enable default ask mode. This does not disable an explicit
+  `--ask`.
+
 `HOMEBREW_NO_AUTOREMOVE`
 
 : If set, calls to `brew cleanup` and `brew uninstall` will not automatically
@@ -4468,9 +4924,34 @@ command execution (e.g. `$(cat file)`).
 : If set, `brew install` *`formula|cask`* will not upgrade *`formula|cask`* if
   it is installed but outdated.
 
+`HOMEBREW_NO_PATH_SHADOW_CHECK`
+
+: If set, `brew info` and `brew install` will not warn when a formula's
+  executables are shadowed by other commands earlier on `$PATH`.
+
+`HOMEBREW_NO_REQUIRE_TAP_TRUST`
+
+: If set, do not require non-official tap formulae, casks or commands to be
+  trusted. This is not recommended and will be removed in a later release. Also
+  enables commands that evaluate all formulae and casks.
+
+`HOMEBREW_NO_SANDBOX_LINUX`
+
+: If set, disable the Linux sandbox.
+
 `HOMEBREW_NO_UPDATE_REPORT_NEW`
 
 : If set, `brew update` will not show the list of newly added formulae/casks.
+
+`HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS`
+
+: If set, `brew upgrade` will not automatically upgrade casks with `auto_updates
+  true`. Does not affect `--greedy` or `--greedy-auto-updates` upgrades.
+
+`HOMEBREW_NO_UPGRADE_QUIT_CASKS`
+
+: If set, `brew upgrade` will not quit running applications for casks during
+  upgrades.
 
 `HOMEBREW_NO_VERIFY_ATTESTATIONS`
 
@@ -4484,9 +4965,14 @@ command execution (e.g. `$(cat file)`).
   
   *Default:* `https://pypi.org/simple`.
 
-`HOMEBREW_PRY`
+`HOMEBREW_REQUIRE_TAP_TRUST`
 
-: If set, use Pry for the `brew irb` command.
+: If set, require non-official tap formulae, casks and commands to be trusted
+  with `brew trust` before Homebrew loads them. This is the default unless
+  `$HOMEBREW_NO_REQUIRE_TAP_TRUST` is set. Also enables commands that evaluate
+  all formulae and casks.
+  
+  *Default:* `true`.
 
 `HOMEBREW_SIMULATE_MACOS_ON_LINUX`
 
@@ -4501,12 +4987,12 @@ command execution (e.g. `$(cat file)`).
 `HOMEBREW_SORBET_RECURSIVE`
 
 : If set along with `$HOMEBREW_SORBET_RUNTIME`, enable recursive typechecking
-  using Sorbet. Auomatically enabled when running tests.
+  using Sorbet. Automatically enabled when running `brew tests`.
 
 `HOMEBREW_SORBET_RUNTIME`
 
-: If set, enable runtime typechecking using Sorbet. Set by default for
-  `$HOMEBREW_DEVELOPER` or when running some developer commands.
+: If set, enable runtime typechecking using Sorbet. Set by default when running
+  `brew test`, `brew test-bot` or `brew tests`.
 
 `HOMEBREW_SSH_CONFIG_PATH`
 
@@ -4556,10 +5042,6 @@ command execution (e.g. `$(cat file)`).
 
 : A space-separated list of casks. Homebrew will act as if `--greedy` was passed
   when upgrading any cask on this list.
-
-`HOMEBREW_USE_INTERNAL_API`
-
-: If set, test the new beta internal API for fetching formula and cask data.
 
 `HOMEBREW_VERBOSE`
 
@@ -4632,22 +5114,14 @@ Homebrew API: <https://docs.brew.sh/rubydoc/>
 
 Homebrew's Project Leader is Mike McQuaid.
 
-Homebrew's Lead Maintainers are Bevan Kay, Bo Anderson, Branch Vincent, Carlo
-Cabrera, Dustin Rodrigues, FX Coudert, Issy Long, Justin Krehel, Michael Cho,
-Michka Popoff, Mike McQuaid, Nanda H Krishna, Patrick Linnane, Rui Chen, Ruoyu
-Zhong, Sam Ford, Sean Molenaar and Thierry Moisan.
+Homebrew's Lead Maintainers are Bevan Kay, Carlo Cabrera, Issy Long, Justin
+Krehel, Michael Cho, Mike McQuaid, Nanda H Krishna, Patrick Linnane, Rui Chen,
+Ruoyu Zhong, Sam Ford and Sean Molenaar.
 
-Homebrew's other Maintainers are Anton Melnikov, Caleb Xu, Daeho Ro, Douglas
-Eichelberger, Eric Knibbe, Klaus Hipp, Markus Reiter, Rylan Polster, Štefan
-Baebler and William Woodruff.
-
-Former Maintainers with significant contributions include Alexander Bayandin,
-Miccal Matthews, Misty De Méo, Shaun Jackman, Vítor Galvão, Claudia Pellegrino,
-Seeker, Jan Viljanen, JCount, commitay, Dominyk Tiller, Tim Smith, Baptiste
-Fontaine, Xu Cheng, Martin Afanasjew, Brett Koonce, Charlie Sharpsteen, Jack
-Nagel, Adam Vandenberg, Andrew Janke, Alex Dunn, neutric, Tomasz Pajor,
-Uladzislau Shablinski, Alyssa Ross, ilovezfs, Chongyu Zhu and Homebrew's
-creator: Max Howell.
+Homebrew's other Maintainers are Andrew Nesbitt, Anton Melnikov, Bo Anderson,
+Branch Vincent, Caleb Xu, Daeho Ro, Douglas Eichelberger, Dustin Rodrigues, FX
+Coudert, Klaus Hipp, Markus Reiter, Michka Popoff, Rylan Polster, Stefan
+Baebler, Thierry Moisan and William Woodruff.
 
 ## BUGS
 

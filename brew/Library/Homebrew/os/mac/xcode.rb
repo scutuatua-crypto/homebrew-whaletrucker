@@ -5,7 +5,7 @@ module OS
   module Mac
     # Helper module for querying Xcode information.
     module Xcode
-      DEFAULT_BUNDLE_PATH = T.let(Pathname("/Applications/Xcode.app").freeze, ::Pathname)
+      DEFAULT_BUNDLE_PATH = ::Pathname.new("/Applications/Xcode.app").freeze
       BUNDLE_ID = "com.apple.dt.Xcode"
       OLD_BUNDLE_ID = "com.apple.Xcode"
       APPLE_DEVELOPER_DOWNLOAD_URL = "https://developer.apple.com/download/all/"
@@ -17,8 +17,7 @@ module OS
       def self.latest_version(macos: MacOS.version)
         macos = macos.strip_patch
         case macos
-        when "26" then "26.0"
-        when "15" then "16.4"
+        when "26", "15" then "26.3"
         when "14" then "16.2"
         when "13" then "15.2"
         when "12" then "14.2"
@@ -40,7 +39,6 @@ module OS
       def self.minimum_version
         macos = MacOS.version
         case macos
-        when "26" then "26.0"
         when "15" then "16.0"
         when "14" then "15.0"
         when "13" then "14.1"
@@ -189,6 +187,7 @@ module OS
           # Fast path that will probably almost always work unless `xcode-select -p` is misconfigured
           version_plist = T.must(prefix).parent/"version.plist"
           if version_plist.file?
+            require "plist"
             data = Plist.parse_xml(version_plist, marshal: false)
             version = data["CFBundleShortVersionString"] if data
             return version if version
@@ -230,7 +229,7 @@ module OS
         when "14.0.3" then "14.3.1"
         when "15.0.0" then "15.4"
         when "16.0.0" then "16.2"
-        else               "26.0"
+        else               "26.3"
         end
       end
 
@@ -251,12 +250,6 @@ module OS
       sig { returns(T::Boolean) }
       def self.installed?
         !version.null?
-      end
-
-      sig { returns(T::Boolean) }
-      def self.separate_header_package?
-        odeprecated "MacOS::CLT.separate_header_package?"
-        true
       end
 
       sig { returns(CLTSDKLocator) }
@@ -304,8 +297,6 @@ module OS
 
       sig { returns(String) }
       def self.update_instructions
-        return installation_instructions if OS::Mac.version.prerelease?
-
         software_update_location = if MacOS.version >= "13"
           "System Settings"
         else
@@ -332,13 +323,13 @@ module OS
       sig { returns(String) }
       def self.latest_clang_version
         case MacOS.version
-        when "26" then "1700.3.19.1"
-        when "15" then "1700.0.13.5"
+        when "27" then "2100.3.20.102"
+        when "26", "15" then "1700.6.4.2"
         when "14" then "1600.0.26.6"
         when "13" then "1500.1.0.2.5"
-        when "12"    then "1400.0.29.202"
-        when "11"    then "1300.0.29.30"
-        else              "1200.0.32.29"
+        when "12" then "1400.0.29.202"
+        when "11" then "1300.0.29.30"
+        else           "1200.0.32.29"
         end
       end
 
@@ -383,7 +374,7 @@ module OS
 
       sig { returns(T.nilable(String)) }
       def self.detect_version_from_clang_version
-        clang_version = detect_clang_version
+        clang_version = detect_clang_version&.sub(/\A(\d+)(\d)(\d)\..*/, "\\1.\\2.\\3")
         return if clang_version.nil?
 
         MacOS::Xcode.detect_version_from_clang_version(Version.new(clang_version))

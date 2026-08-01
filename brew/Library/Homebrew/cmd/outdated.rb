@@ -3,9 +3,9 @@
 
 require "abstract_command"
 require "formula"
-require "keg"
 require "cask/caskroom"
 require "api"
+require "minimum_version"
 
 module Homebrew
   module Cmd
@@ -27,17 +27,21 @@ module Homebrew
                description: "Print output in JSON format. There are two versions: `v1` and `v2`. " \
                             "`v1` is deprecated and is currently the default if no version is specified. " \
                             "`v2` prints outdated formulae and casks."
+        flag   "--minimum-version=", "--min-version=",
+               description: "Only list a named formula or cask with an installed version below the given " \
+                            "minimum version."
         switch "--fetch-HEAD",
                description: "Fetch the upstream repository to detect if the HEAD installation of the " \
                             "formula is outdated. Otherwise, the repository's HEAD will only be checked for " \
                             "updates when a new stable or development version has been released."
         switch "-g", "--greedy",
-               description: "Also include outdated casks with `auto_updates true` or `version :latest`.",
+               description: "Also include outdated casks with `version :latest` and `auto_updates true` " \
+                            "casks that would otherwise be skipped.",
                env:         :upgrade_greedy
         switch "--greedy-latest",
                description: "Also include outdated casks including those with `version :latest`."
         switch "--greedy-auto-updates",
-               description: "Also include outdated casks including those with `auto_updates true`."
+               description: "Also include outdated `auto_updates true` casks that would otherwise be skipped."
 
         conflicts "--quiet", "--verbose", "--json"
         conflicts "--formula", "--cask"
@@ -47,6 +51,9 @@ module Homebrew
 
       sig { override.void }
       def run
+        raise UsageError, "`--minimum-version` requires exactly one formula or cask argument." if
+          minimum_version.present? && args.named.length != 1
+
         case json_version(args.json)
         when :v1
           odie "`brew outdated --json=v1` is no longer supported. Use brew outdated --json=v2 instead."
@@ -83,6 +90,31 @@ module Homebrew
         Homebrew.failed = args.named.present? && outdated.present?
       end
 
+      sig {
+        params(formulae_or_casks: T::Array[T.any(Formula, Cask::Cask)]).returns(T::Array[T.any(Formula, Cask::Cask)])
+      }
+      def select_outdated(formulae_or_casks)
+        formulae_or_casks.select do |formula_or_cask|
+          if formula_or_cask.is_a?(Formula)
+            if minimum_version.present?
+              formula_outdated_kegs(formula_or_cask).present?
+            else
+              formula_or_cask.outdated?(fetch_head: args.fetch_HEAD?)
+            end
+          else
+            if minimum_version.present?
+              next MinimumVersion.cask_installed_below?(formula_or_cask, T.must(minimum_version))
+            end
+
+            cask_greedy = upgrade_greedy_cask?(args.greedy?, formula_or_cask)
+
+            formula_or_cask.outdated?(greedy:              cask_greedy,
+                                      greedy_latest:       args.greedy_latest?,
+                                      greedy_auto_updates: args.greedy_auto_updates?)
+          end
+        end
+      end
+
       private
 
       sig { params(formulae_or_casks: T::Array[T.any(Formula, Cask::Cask)]).void }
@@ -92,10 +124,12 @@ module Homebrew
             f = formula_or_cask
 
             if verbose?
-              outdated_kegs = f.outdated_kegs(fetch_head: args.fetch_HEAD?)
-              latest_formula = f.latest_formula(prefer_stub: true)
+              outdated_kegs = formula_outdated_kegs(f)
+              latest_formula = f.latest_formula
 
-              current_version = if f.alias_changed? && !latest_formula.latest_version_installed?
+              current_version = if minimum_version.present?
+                minimum_version
+              elsif f.alias_changed? && !latest_formula.latest_version_installed?
                 "#{latest_formula.name} (#{latest_formula.pkg_version})"
               elsif f.head?
                 latest_head_version = f.latest_head_pkg_version(fetch_head: args.fetch_HEAD?)
@@ -124,8 +158,18 @@ module Homebrew
           else
             c = formula_or_cask
 
-            puts c.outdated_info(upgrade_greedy_cask?(args.greedy?, formula_or_cask), verbose?,
-                                 false, args.greedy_latest?, args.greedy_auto_updates?)
+            if minimum_version.present?
+              if verbose?
+                pinned_version = " [pinned at #{c.pinned_version}]" if c.pinned?
+
+                puts "#{c.token} (#{c.installed_version}) < #{minimum_version}#{pinned_version}"
+              else
+                puts c.token
+              end
+            else
+              puts c.outdated_info(upgrade_greedy_cask?(args.greedy?, formula_or_cask), verbose?,
+                                   false, args.greedy_latest?, args.greedy_auto_updates?)
+            end
           end
         end
       end
@@ -140,8 +184,10 @@ module Homebrew
           if formula_or_cask.is_a?(Formula)
             f = formula_or_cask
 
-            outdated_versions = f.outdated_kegs(fetch_head: args.fetch_HEAD?).map(&:version)
-            current_version = if f.head? && outdated_versions.any? { |v| v.to_s == f.pkg_version.to_s }
+            outdated_versions = formula_outdated_kegs(f).map(&:version)
+            current_version = if minimum_version.present?
+              minimum_version
+            elsif f.head? && outdated_versions.any? { |v| v.to_s == f.pkg_version.to_s }
               "HEAD"
             else
               f.pkg_version.to_s
@@ -155,8 +201,19 @@ module Homebrew
           else
             c = formula_or_cask
 
-            c.outdated_info(upgrade_greedy_cask?(args.greedy?, formula_or_cask),
-                            verbose?, true, args.greedy_latest?, args.greedy_auto_updates?)
+            if minimum_version.present?
+              { name:               c.token,
+                installed_versions: [T.must(c.installed_version)],
+                current_version:    T.must(minimum_version),
+                pinned:             c.pinned?,
+                pinned_version:     c.pinned_version }
+            else
+              T.cast(
+                c.outdated_info(upgrade_greedy_cask?(args.greedy?, formula_or_cask),
+                                verbose?, true, args.greedy_latest?, args.greedy_auto_updates?),
+                T::Hash[Symbol, T.untyped],
+              )
+            end
           end
         end
       end
@@ -176,6 +233,9 @@ module Homebrew
         }
         version_hash.fetch(version) { raise UsageError, "invalid JSON version: #{version}" }
       end
+
+      sig { returns(T.nilable(String)) }
+      def minimum_version = args.minimum_version || args.min_version
 
       sig { returns(T::Array[Formula]) }
       def outdated_formulae
@@ -208,19 +268,9 @@ module Homebrew
         [select_outdated(formulae).sort, select_outdated(casks)]
       end
 
-      sig {
-        params(formulae_or_casks: T::Array[T.any(Formula, Cask::Cask)]).returns(T::Array[T.any(Formula, Cask::Cask)])
-      }
-      def select_outdated(formulae_or_casks)
-        formulae_or_casks.select do |formula_or_cask|
-          if formula_or_cask.is_a?(Formula)
-            formula_or_cask.outdated?(fetch_head: args.fetch_HEAD?)
-          else
-            formula_or_cask.outdated?(greedy:              upgrade_greedy_cask?(args.greedy?, formula_or_cask),
-                                      greedy_latest:       args.greedy_latest?,
-                                      greedy_auto_updates: args.greedy_auto_updates?)
-          end
-        end
+      sig { params(formula: Formula).returns(T::Array[Keg]) }
+      def formula_outdated_kegs(formula)
+        MinimumVersion.formula_outdated_kegs(formula, minimum_version, fetch_head: args.fetch_HEAD?)
       end
 
       sig { params(greedy: T::Boolean, cask: Cask::Cask).returns(T::Boolean) }

@@ -2,7 +2,9 @@
 # frozen_string_literal: true
 
 require "system_command"
+require "uri"
 require "utils/output"
+require "utils/path"
 
 module GitHub
   sig { params(scopes: T::Array[String]).returns(String) }
@@ -18,22 +20,28 @@ module GitHub
     EOS
   end
 
-  API_URL = T.let("https://api.github.com", String)
-  API_MAX_PAGES = T.let(50, Integer)
+  API_URL = "https://api.github.com"
+  API_MAX_PAGES = 50
   private_constant :API_MAX_PAGES
-  API_MAX_ITEMS = T.let(5000, Integer)
+  API_MAX_ITEMS = 5000
   private_constant :API_MAX_ITEMS
-  PAGINATE_RETRY_COUNT = T.let(3, Integer)
+  PAGINATE_RETRY_COUNT = 3
   private_constant :PAGINATE_RETRY_COUNT
 
-  CREATE_GIST_SCOPES = T.let(["gist"].freeze, T::Array[String])
-  CREATE_ISSUE_FORK_OR_PR_SCOPES = T.let(["repo"].freeze, T::Array[String])
-  CREATE_WORKFLOW_SCOPES = T.let(["workflow"].freeze, T::Array[String])
+  CREATE_GIST_SCOPES = ["gist"].freeze
+  CREATE_ISSUE_FORK_OR_PR_SCOPES = ["repo"].freeze
+  CREATE_WORKFLOW_SCOPES = ["workflow"].freeze
   ALL_SCOPES = T.let((CREATE_GIST_SCOPES + CREATE_ISSUE_FORK_OR_PR_SCOPES + CREATE_WORKFLOW_SCOPES).freeze,
                      T::Array[String])
   private_constant :ALL_SCOPES
-  GITHUB_PERSONAL_ACCESS_TOKEN_REGEX = T.let(/^(?:[a-f0-9]{40}|(?:gh[pousr]|github_pat)_\w{36,251})$/, Regexp)
-  private_constant :GITHUB_PERSONAL_ACCESS_TOKEN_REGEX
+  GITHUB_ACCESS_TOKEN_REGEX = %r{
+    ^(?:
+      [a-f0-9]{40}                       | # legacy 40-char hex PAT
+      (?:gh[pour]|github_pat)_\w{36,251} | # PAT / OAuth / user / refresh tokens
+      ghs_[A-Za-z0-9.\-_]{36,}             # GitHub App installation token
+    )$
+  }x
+  private_constant :GITHUB_ACCESS_TOKEN_REGEX
 
   # Helper functions for accessing the GitHub API.
   #
@@ -46,13 +54,18 @@ module GitHub
     class Error < RuntimeError
       include Utils::Output::Mixin
 
-      sig { returns(T.nilable(String)) }
-      attr_reader :github_message
-
       sig { params(message: T.nilable(String), github_message: String).void }
       def initialize(message = nil, github_message = T.unsafe(nil))
         @github_message = T.let(github_message, T.nilable(String))
         super(message)
+      end
+    end
+
+    # Error when the Git repository to be queried is empty.
+    class GitRepositoryIsEmptyError < Error
+      sig { params(github_message: String).void }
+      def initialize(github_message)
+        super(nil, github_message)
       end
     end
 
@@ -87,16 +100,13 @@ module GitHub
       end
     end
 
-    GITHUB_IP_ALLOWLIST_ERROR = T.let(
-      Regexp.new(
-        "Although you appear to have the correct authorization credentials, " \
-        "the `(.+)` organization has an IP allow list enabled, " \
-        "and your IP address is not permitted to access this resource",
-      ).freeze,
-      Regexp,
-    )
+    GITHUB_IP_ALLOWLIST_ERROR = Regexp.new(
+      "Although you appear to have the correct authorization credentials, " \
+      "the `(.+)` organization has an IP allow list enabled, " \
+      "and your IP address is not permitted to access this resource",
+    ).freeze
 
-    NO_CREDENTIALS_MESSAGE = T.let <<~MESSAGE.freeze, String
+    NO_CREDENTIALS_MESSAGE = T.let(<<~MESSAGE.freeze, String)
       No GitHub credentials found in macOS Keychain, GitHub CLI or the environment.
       #{GitHub.pat_blurb}
     MESSAGE
@@ -152,6 +162,7 @@ module GitHub
 
     ERRORS = T.let([
       AuthenticationFailedError,
+      GitRepositoryIsEmptyError,
       HTTPNotFoundError,
       RateLimitExceededError,
       Error,
@@ -162,47 +173,42 @@ module GitHub
     sig { returns(T.nilable(String)) }
     def self.github_cli_token
       require "utils/uid"
-      Utils::UID.drop_euid do
-        # Avoid `Formula["gh"].opt_bin` so this method works even with `HOMEBREW_DISABLE_LOAD_FORMULA`.
-        env = {
-          "PATH" => PATH.new(HOMEBREW_PREFIX/"opt/gh/bin", ENV.fetch("PATH")),
-          "HOME" => Utils::UID.uid_home,
-        }.compact
-        gh_out, _, result = system_command("gh",
-                                           args:         ["auth", "token", "--hostname", "github.com"],
-                                           env:,
-                                           print_stderr: false).to_a
-        return unless result.success?
+      # Avoid `Formula["gh"].opt_bin` so this method works even with `HOMEBREW_DISABLE_LOAD_FORMULA`.
+      env = Utils::Path.formula_opt_bin_env("gh").merge("HOME" => Utils::UID.uid_home).compact
+      gh_out, _, result = system_command("gh",
+                                         args:            ["auth", "token", "--hostname", "github.com"],
+                                         env:,
+                                         print_stderr:    false,
+                                         run_as_real_uid: true).to_a
+      return unless result.success?
 
-        gh_out.chomp.presence
-      end
+      gh_out.chomp.presence
     end
 
     # Gets the password field from `git-credential-osxkeychain` for github.com,
-    # but only if that password looks like a GitHub Personal Access Token.
+    # but only if that password looks like a GitHub access token.
     sig { returns(T.nilable(String)) }
     def self.keychain_username_password
       require "utils/uid"
-      Utils::UID.drop_euid do
-        git_credential_out, _, result = system_command("git",
-                                                       args:         ["credential-osxkeychain", "get"],
-                                                       input:        ["protocol=https\n", "host=github.com\n"],
-                                                       env:          { "HOME" => Utils::UID.uid_home }.compact,
-                                                       print_stderr: false).to_a
-        return unless result.success?
+      git_credential_out, _, result = system_command("git",
+                                                     args:            ["credential-osxkeychain", "get"],
+                                                     input:           ["protocol=https\n", "host=github.com\n"],
+                                                     env:             { "HOME" => Utils::UID.uid_home }.compact,
+                                                     print_stderr:    false,
+                                                     run_as_real_uid: true).to_a
+      return unless result.success?
 
-        git_credential_out.force_encoding("ASCII-8BIT")
-        github_username = git_credential_out[/^username=(.+)/, 1]
-        github_password = git_credential_out[/^password=(.+)/, 1]
-        return unless github_username
+      git_credential_out.force_encoding("ASCII-8BIT")
+      github_username = git_credential_out[/^username=(.+)/, 1]
+      github_password = git_credential_out[/^password=(.+)/, 1]
+      return unless github_username
 
-        # Don't use passwords from the keychain unless they look like
-        # GitHub Personal Access Tokens:
-        #   https://github.com/Homebrew/brew/issues/6862#issuecomment-572610344
-        return unless GITHUB_PERSONAL_ACCESS_TOKEN_REGEX.match?(github_password)
+      # Don't use passwords from the keychain unless they look like
+      # GitHub access tokens:
+      #   https://github.com/Homebrew/brew/issues/6862#issuecomment-572610344
+      return unless GITHUB_ACCESS_TOKEN_REGEX.match?(github_password)
 
-        github_password.presence
-      end
+      github_password.presence
     end
 
     sig { returns(T.nilable(String)) }
@@ -230,6 +236,7 @@ module GitHub
       env_token:                  "HOMEBREW_GITHUB_API_TOKEN",
       github_cli_token:           "GitHub CLI login",
       keychain_username_password: "macOS Keychain GitHub",
+      none:                       "none",
     }.freeze, T::Hash[Symbol, String])
 
     # Given an API response from GitHub, warn the user if their credentials
@@ -260,7 +267,7 @@ module GitHub
       end, T.nilable(String))
     end
 
-    sig {
+    T::Sig::WithoutRuntime.sig {
       params(
         url:              T.any(String, URI::Generic),
         data:             T::Hash[Symbol, T.untyped],
@@ -268,11 +275,7 @@ module GitHub
         request_method:   Symbol,
         scopes:           T::Array[String],
         parse_json:       T::Boolean,
-        _block:           T.nilable(
-          T.proc
-           .params(data: T::Hash[String, T.untyped])
-          .returns(T.untyped),
-        ),
+        _block:           T.nilable(T.proc.params(data: T::Hash[String, T.untyped]).returns(T.untyped)),
       ).returns(T.untyped)
     }
     def self.open_rest(url, data: T.unsafe(nil), data_binary_path: T.unsafe(nil), request_method: T.unsafe(nil),
@@ -318,7 +321,7 @@ module GitHub
         args += ["--dump-header", T.must(headers_tmpfile.path)]
 
         require "utils/curl"
-        result = Utils::Curl.curl_output("--location", url.to_s, *args, secrets: [token])
+        result = Utils::Curl.curl_output("--location", url.to_s, *args, secrets: token ? [token] : [])
         output, _, http_code = result.stdout.rpartition("\n")
         output, _, http_code = output.rpartition("\n") if http_code == "000"
         headers = headers_tmpfile.read
@@ -349,15 +352,20 @@ module GitHub
       end
     end
 
-    sig {
+    sig { params(user: String, repo: String, branch: String).returns(T::Hash[String, T.untyped]) }
+    def self.commit(user, repo, branch: "main")
+      open_rest("#{API_URL}/repos/#{user}/#{repo}/commits/#{URI.encode_uri_component(branch)}", request_method: :GET)
+    end
+
+    T::Sig::WithoutRuntime.sig {
       params(
         url:                     T.any(String, URI::Generic),
         additional_query_params: String,
         per_page:                Integer,
         scopes:                  T::Array[String],
         _block:                  T.proc
-           .params(result: T.untyped, page: Integer)
-          .returns(T.untyped),
+                                  .params(result: T.untyped, page: Integer)
+                                  .returns(T.untyped),
       ).void
     }
     def self.paginate_rest(url, additional_query_params: T.unsafe(nil), per_page: 100, scopes: [].freeze, &_block)
@@ -467,6 +475,10 @@ module GitHub
         raise MissingAuthenticationError if credentials_type == :none && scopes.present?
 
         raise HTTPNotFoundError, message
+      when "409"
+        raise GitRepositoryIsEmptyError, message if message.downcase.include? "git repository is empty"
+
+        raise Error, message
       when "422"
         errors = json&.[]("errors") || []
         raise ValidationFailedError.new(message, errors)
