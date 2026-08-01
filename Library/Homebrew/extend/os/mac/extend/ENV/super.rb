@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "utils/path"
+
 module OS
   module Mac
     module Superenv
@@ -12,7 +14,7 @@ module OS
       module ClassMethods
         sig { returns(::Pathname) }
         def shims_path
-          HOMEBREW_SHIMS_PATH/"mac/super"
+          HOMEBREW_SHIMS_PATH/"mac/super/bin"
         end
 
         sig { returns(T.nilable(::Pathname)) }
@@ -53,7 +55,7 @@ module OS
         paths = []
         if compiler == :llvm_clang
           paths << "#{self["HOMEBREW_SDKROOT"]}/usr/lib"
-          paths << ::Formula["llvm"].opt_lib
+          paths << Utils::Path.formula_opt_lib("llvm")
         end
         paths << "#{self["HOMEBREW_SDKROOT"]}/System/Library/Frameworks/OpenGL.framework/Versions/Current/Libraries"
         paths.map { |p| ::Pathname.new(p) }
@@ -85,8 +87,13 @@ module OS
       sig { returns(String) }
       def determine_cccfg
         s = +""
-        # Fix issue with >= Mountain Lion apr-1-config having broken paths
-        s << "a"
+        # Pass `-no_fixup_chains` whenever the linker is invoked with `-undefined dynamic_lookup`.
+        # See: https://github.com/python/cpython/issues/97524
+        #      https://github.com/pybind/pybind11/pull/4301
+        s << "f" if no_fixup_chains_support?
+        # Pass `-ld_classic` whenever the linker is invoked with `-dead_strip_dylibs`
+        # on `ld` versions that don't properly handle that option.
+        s << "c" if ::DevelopmentTools.ld64_version.between?("1015.7", "1022.1")
         s.freeze
       end
 
@@ -127,11 +134,14 @@ module OS
 
         super
 
-        # On macOS Sonoma (at least release candidate), iconv() is generally
-        # present and working, but has a minor regression that defeats the
-        # test implemented in gettext's configure script (and used by many
-        # gettext dependents).
-        ENV["am_cv_func_iconv_works"] = "yes" if MacOS.version == "14"
+        # On macOS Sonoma and later, iconv() is generally present and working,
+        # but has a minor regression that defeats the test implemented in gettext's
+        # configure script (and used by many gettext dependents).
+        # All reported bugs were fixed in Sonoma patch releases, though some new bugs
+        # were revealed since then (and unfortunately very rarely actually reported to Apple).
+        # Using brewed libiconv is a disruptive option that requires rebuilding most dependents,
+        # so is never accepted apart from a select few leaf formulae that are worse impacted.
+        ENV["am_cv_func_iconv_works"] = "yes" if MacOS.version >= "14"
 
         # The tools in /usr/bin proxy to the active developer directory.
         # This means we can use them for any combination of CLT and Xcode.
@@ -139,29 +149,22 @@ module OS
 
         # Deterministic timestamping.
         self["ZERO_AR_DATE"] = "1"
-
-        # Pass `-no_fixup_chains` whenever the linker is invoked with `-undefined dynamic_lookup`.
-        # See: https://github.com/python/cpython/issues/97524
-        #      https://github.com/pybind/pybind11/pull/4301
-        no_fixup_chains
-
-        # Strip build prefixes from linker where supported, for deterministic builds.
-        append_to_cccfg "o"
-
-        # Pass `-ld_classic` whenever the linker is invoked with `-dead_strip_dylibs`
-        # on `ld` versions that don't properly handle that option.
-        return unless ::DevelopmentTools.ld64_version.between?("1015.7", "1022.1")
-
-        append_to_cccfg "c"
       end
 
       sig { void }
       def no_weak_imports
+        # This has little-to-no usage and doesn't make sense to have a special function for.
+        # When removing this function, also cleanup related usage in the `cc` shim
+        # and remove `no_weak_imports_support?`.
+        odeprecated "ENV.no_weak_imports"
         append_to_cccfg "w" if no_weak_imports_support?
       end
 
       sig { void }
       def no_fixup_chains
+        # This function has been no-op for quite some time as it's set by default.
+        # Unlike above, do not touch the `cc` shim or the support method when removing this.
+        odeprecated "ENV.no_fixup_chains"
         append_to_cccfg "f" if no_fixup_chains_support?
       end
     end

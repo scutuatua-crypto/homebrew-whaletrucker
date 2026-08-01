@@ -1,119 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "context"
-
-module Homebrew
-  extend Context
-
-  sig { params(path: T.nilable(T.any(String, Pathname))).returns(T::Boolean) }
-  def self.require?(path)
-    return false if path.nil?
-
-    if defined?(Warnings)
-      # Work around require warning when done repeatedly:
-      # https://bugs.ruby-lang.org/issues/21091
-      Warnings.ignore(/already initialized constant/, /previous definition of/) do
-        require path.to_s
-      end
-    else
-      require path.to_s
-    end
-    true
-  rescue LoadError
-    false
-  end
-
-  # Need to keep this naming as-is for backwards compatibility.
-  # rubocop:disable Naming/PredicateMethod
-  sig {
-    params(
-      cmd:     T.nilable(T.any(Pathname, String, [String, String], T::Hash[String, T.nilable(String)])),
-      argv0:   T.nilable(T.any(Pathname, String, [String, String])),
-      args:    T.any(Pathname, String),
-      options: T.untyped,
-      _block:  T.nilable(T.proc.void),
-    ).returns(T::Boolean)
-  }
-  def self._system(cmd, argv0 = nil, *args, **options, &_block)
-    pid = fork do
-      yield if block_given?
-      args.map!(&:to_s)
-      begin
-        if argv0
-          exec(cmd, argv0, *args, **options)
-        else
-          exec(cmd, *args, **options)
-        end
-      rescue
-        nil
-      end
-      exit! 1 # never gets here unless exec failed
-    end
-    Process.wait(pid)
-    $CHILD_STATUS.success?
-  end
-  # TODO: make private_class_method when possible
-  # private_class_method :_system
-  # rubocop:enable Naming/PredicateMethod
-
-  sig {
-    params(
-      cmd:     T.any(Pathname, String, [String, String], T::Hash[String, T.nilable(String)]),
-      argv0:   T.nilable(T.any(Pathname, String, [String, String])),
-      args:    T.any(Pathname, String),
-      options: T.untyped,
-    ).returns(T::Boolean)
-  }
-  def self.system(cmd, argv0 = nil, *args, **options)
-    if verbose?
-      out = (options[:out] == :err) ? $stderr : $stdout
-      out.puts "#{cmd} #{args * " "}".gsub(RUBY_PATH, "ruby")
-                                     .gsub($LOAD_PATH.join(File::PATH_SEPARATOR).to_s, "$LOAD_PATH")
-    end
-    _system(cmd, argv0, *args, **options)
-  end
-
-  # `Module` and `Regexp` are global variables used as types here so they don't need to be imported
-  # rubocop:disable Style/GlobalVars
-  sig { params(the_module: T::Module[T.anything], pattern: Regexp).void }
-  def self.inject_dump_stats!(the_module, pattern)
-    @injected_dump_stat_modules ||= T.let({}, T.nilable(T::Hash[T::Module[T.anything], T::Array[String]]))
-    @injected_dump_stat_modules[the_module] ||= []
-    injected_methods = @injected_dump_stat_modules.fetch(the_module)
-    the_module.module_eval do
-      instance_methods.grep(pattern).each do |name|
-        next if injected_methods.include? name
-
-        method = instance_method(name)
-        define_method(name) do |*args, &block|
-          require "time"
-
-          time = Time.now
-
-          begin
-            method.bind_call(self, *args, &block)
-          ensure
-            $times[name] ||= 0
-            $times[name] += Time.now - time
-          end
-        end
-      end
-    end
-
-    return unless $times.nil?
-
-    $times = {}
-    at_exit do
-      col_width = [$times.keys.map(&:size).max.to_i + 2, 15].max
-      $times.sort_by { |_k, v| v }.each do |method, time|
-        puts format("%<method>-#{col_width}s %<time>0.4f sec", method: "#{method}:", time:)
-      end
-    end
-  end
-  # rubocop:enable Style/GlobalVars
-end
-
 module Utils
   # Removes the rightmost segment from the constant expression in the string.
   #
@@ -151,6 +38,57 @@ module Utils
     else
       path
     end
+  end
+
+  sig { params(full_name: String).returns(String) }
+  def self.name_from_full_name(full_name)
+    _, _, name = full_name.split("/", 3)
+
+    name || full_name
+  end
+
+  sig { params(formula_or_cask: T.any(Formula, Cask::Cask)).returns(String) }
+  def self.name_or_token(formula_or_cask)
+    formula_or_cask.is_a?(Cask::Cask) ? formula_or_cask.token : formula_or_cask.name
+  end
+
+  sig { params(full_name: String).returns(T.nilable(String)) }
+  def self.tap_from_full_name(full_name)
+    user, repository, name = full_name.split("/", 3)
+    return unless name
+
+    "#{user}/#{repository}"
+  end
+
+  # Whether `full_name` is fully-qualified with a tap prefix, e.g. `user/tap/name`.
+  sig { params(full_name: String).returns(T::Boolean) }
+  def self.full_name?(full_name)
+    full_name.count("/") == 2
+  end
+
+  # Maps `items` to `block` results with one thread per item, so that
+  # blocking waits (subprocesses, network requests) overlap instead of
+  # accumulating serially. Results keep the order of `items`. If multiple
+  # blocks raise, the exception re-raised by `Thread#value` is the earliest
+  # in `items` order (not necessarily the chronologically first failure) and
+  # other blocks may still run to completion. Only worthwhile when each block
+  # spends its time waiting: the GVL serializes Ruby execution.
+  sig {
+    type_parameters(:Item, :Result)
+      .params(
+        items: T::Enumerable[T.type_parameter(:Item)],
+        block: T.proc.params(item: T.type_parameter(:Item)).returns(T.type_parameter(:Result)),
+      ).returns(T::Array[T.type_parameter(:Result)])
+  }
+  def self.parallel_map(items, &block)
+    threads = items.map do |item|
+      Thread.new do
+        # The exception is re-raised by `Thread#value`; don't also report it.
+        Thread.current.report_on_exception = false
+        yield(item)
+      end
+    end
+    threads.map { |thread| T.cast(thread.value, T.type_parameter(:Result)) }
   end
 
   # A lightweight alternative to `ActiveSupport::Inflector.pluralize`:
@@ -231,5 +169,69 @@ module Utils
     return T.must(string[1..]).to_sym if string.start_with?(":")
 
     string
+  end
+
+  sig { params(obj: T.untyped).returns(T.untyped) }
+  def self.deep_stringify_symbols(obj)
+    case obj
+    when String
+      # Escape leading : or \ to avoid confusion with stringified symbols
+      # ":foo" -> "\:foo"
+      # "\foo" -> "\\foo"
+      if obj.start_with?(":", "\\")
+        "\\#{obj}"
+      else
+        obj
+      end
+    when Symbol
+      ":#{obj}"
+    when Hash
+      obj.to_h { |k, v| [deep_stringify_symbols(k), deep_stringify_symbols(v)] }
+    when Array
+      obj.map { |v| deep_stringify_symbols(v) }
+    else
+      obj
+    end
+  end
+
+  sig { params(obj: T.untyped).returns(T.untyped) }
+  def self.deep_unstringify_symbols(obj)
+    case obj
+    when String
+      if obj.start_with?("\\")
+        obj[1..]
+      elsif obj.start_with?(":")
+        T.must(obj[1..]).to_sym
+      else
+        obj
+      end
+    when Hash
+      obj.to_h { |k, v| [deep_unstringify_symbols(k), deep_unstringify_symbols(v)] }
+    when Array
+      obj.map { |v| deep_unstringify_symbols(v) }
+    else
+      obj
+    end
+  end
+
+  sig {
+    type_parameters(:U)
+      .params(obj: T.all(T.type_parameter(:U), Object), compact_zero: T::Boolean)
+      .returns(T.nilable(T.type_parameter(:U)))
+  }
+  def self.deep_compact_blank(obj, compact_zero: true)
+    obj = case obj
+    when Hash
+      obj.transform_values { |v| deep_compact_blank(v, compact_zero:) }
+         .compact
+    when Array
+      obj.filter_map { |v| deep_compact_blank(v, compact_zero:) }
+    else
+      obj
+    end
+
+    return if obj.blank? || (compact_zero && obj.is_a?(Numeric) && obj.zero?)
+
+    obj
   end
 end

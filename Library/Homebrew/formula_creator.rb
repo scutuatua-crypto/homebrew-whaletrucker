@@ -186,6 +186,9 @@ module Homebrew
         <% if @mode == :cabal %>
           depends_on "cabal-install" => :build
           depends_on "ghc" => :build
+          depends_on "gmp"
+
+          uses_from_macos "libffi"
         <% elsif @mode == :cmake %>
           depends_on "cmake" => :build
         <% elsif @mode == :crystal %>
@@ -202,7 +205,7 @@ module Homebrew
         <% elsif @mode == :python %>
           depends_on "#{latest_versioned_formula("python")}"
         <% elsif @mode == :ruby %>
-          uses_from_macos "ruby"
+          depends_on "ruby"
         <% elsif @mode == :rust %>
           depends_on "rust" => :build
         <% elsif @mode == :zig %>
@@ -236,7 +239,7 @@ module Homebrew
             system "shards", "build", "--release"
             bin.install "bin/#{name}"
         <% elsif @mode == :go %>
-            system "go", "build", *std_go_args(ldflags: "-s -w")
+            system "go", "build", *std_go_args
         <% elsif @mode == :meson %>
             system "meson", "setup", "build", *std_meson_args
             system "meson", "compile", "-C", "build", "--verbose"
@@ -268,13 +271,13 @@ module Homebrew
             virtualenv_install_with_resources
         <% elsif @mode == :ruby %>
             ENV["BUNDLE_FORCE_RUBY_PLATFORM"] = "1"
-            ENV["BUNDLE_WITHOUT"] = "development test"
             ENV["BUNDLE_VERSION"] = "system" # Avoid installing Bundler into the keg
+            ENV["BUNDLE_WITHOUT"] = "development test"
             ENV["GEM_HOME"] = libexec
 
             system "bundle", "install"
             system "gem", "build", "\#{name}.gemspec"
-            system "gem", "install", "\#{name}-\#{version}.gem"
+            system "gem", "install", "--ignore-dependencies", "\#{name}-\#{version}.gem"
 
             bin.install libexec/"bin/\#{name}"
             bin.env_script_all_files(libexec/"bin", GEM_HOME: ENV["GEM_HOME"])

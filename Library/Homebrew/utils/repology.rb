@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "erb"
 require "utils/curl"
 require "utils/output"
 
@@ -8,18 +9,17 @@ require "utils/output"
 module Repology
   extend Utils::Output::Mixin
 
+  API_BASE = "https://repology.org/api/v1"
   HOMEBREW_CORE = "homebrew"
   HOMEBREW_CASK = "homebrew_casks"
-  MAX_PAGINATION = 15
-  private_constant :MAX_PAGINATION
 
   sig { params(last_package_in_response: T.nilable(String), repository: String).returns(T::Hash[String, T.untyped]) }
   def self.query_api(last_package_in_response = "", repository:)
-    last_package_in_response += "/" if last_package_in_response.present?
-    url = "https://repology.org/api/v1/projects/#{last_package_in_response}?inrepo=#{repository}&outdated=1"
+    cursor = last_package_in_response.present? ? "#{ERB::Util.url_encode(last_package_in_response)}/" : ""
+    url = "#{API_BASE}/projects/#{cursor}?inrepo=#{repository}&outdated=1"
 
     result = Utils::Curl.curl_output(
-      "--silent", url.to_s,
+      "--fail", "--silent", url,
       use_homebrew_curl: !Utils::Curl.curl_supports_tls13?
     )
     JSON.parse(result.stdout)
@@ -35,12 +35,13 @@ module Repology
 
   sig { params(name: String, repository: String).returns(T.nilable(T::Hash[String, T.untyped])) }
   def self.single_package_query(name, repository:)
-    url = "https://repology.org/api/v1/project/#{name}"
+    url = "#{API_BASE}/project/#{ERB::Util.url_encode(name)}"
 
     result = Utils::Curl.curl_output(
-      "--location", "--silent", url.to_s,
+      "--fail", "--location", "--silent", url,
       use_homebrew_curl: !Utils::Curl.curl_supports_tls13?
     )
+    raise "curl exit #{result.exit_status}: #{result.stderr.strip}" unless result.success?
 
     data = JSON.parse(result.stdout)
     { name => data }
@@ -54,46 +55,6 @@ module Repology
     end
 
     nil
-  end
-
-  sig {
-    params(
-      limit:        T.nilable(Integer),
-      last_package: T.nilable(String),
-      repository:   String,
-    ).returns(T::Hash[String, T.untyped])
-  }
-  def self.parse_api_response(limit = nil, last_package = "", repository:)
-    package_term = case repository
-    when HOMEBREW_CORE
-      "formulae"
-    when HOMEBREW_CASK
-      "casks"
-    else
-      "packages"
-    end
-
-    ohai "Querying outdated #{package_term} from Repology"
-
-    page_no = 1
-    outdated_packages = {}
-
-    while page_no <= MAX_PAGINATION
-      odebug "Paginating Repology API page: #{page_no}"
-
-      response = query_api(last_package, repository:)
-      outdated_packages.merge!(response)
-      last_package = response.keys.max
-
-      page_no += 1
-      break if (limit && outdated_packages.size >= limit) || response.size <= 1
-    end
-
-    package_term = package_term.chop if outdated_packages.size == 1
-    puts "#{outdated_packages.size} outdated #{package_term} found"
-    puts
-
-    outdated_packages.sort.to_h
   end
 
   sig { params(repositories: T::Array[String]).returns(T.any(String, Version)) }

@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "utils/github/actions"
+
 module OS
   module Linux
     module DevCmd
@@ -8,6 +10,29 @@ module OS
         extend T::Helpers
 
         requires_ancestor { Homebrew::DevCmd::Tests }
+
+        sig { void }
+        def check_test_environment!
+          super
+          return unless Homebrew::EnvConfig.sandbox_linux?
+
+          require "sandbox"
+
+          if OS::Linux::Sandbox.landlock?
+            unless ::Sandbox.available?
+              return if GitHub::Actions.env_set?
+
+              ::Sandbox.ensure_sandbox_available!
+            end
+
+            ::Sandbox.configure!
+          elsif GitHub::Actions.env_set?
+            ::Sandbox.configure!
+          else
+            ::Sandbox.ensure_sandbox_installed!(install_from_tests: true)
+          end
+          ::Sandbox.ensure_sandbox_available!
+        end
 
         private
 

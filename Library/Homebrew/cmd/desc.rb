@@ -26,7 +26,8 @@ module Homebrew
         switch "--eval-all",
                description: "Evaluate all available formulae and casks, whether installed or not, to search their " \
                             "descriptions.",
-               env:         :eval_all
+               env:         :eval_all,
+               odeprecated: true
         switch "--formula", "--formulae",
                description: "Treat all named arguments as formulae."
         switch "--cask", "--casks",
@@ -40,16 +41,18 @@ module Homebrew
       sig { override.void }
       def run
         search_type = if args.search?
-          :either
+          Descriptions::SearchField::Either
         elsif args.name?
-          :name
+          Descriptions::SearchField::Name
         elsif args.description?
-          :desc
+          Descriptions::SearchField::Description
         end
 
-        if search_type.present?
-          if !args.eval_all? && Homebrew::EnvConfig.no_install_from_api?
-            raise UsageError, "`brew desc --search` needs `--eval-all` passed or `HOMEBREW_EVAL_ALL=1` set!"
+        if search_type
+          if !args.eval_all? && !Homebrew::EnvConfig.tap_trust_configured? && Homebrew::EnvConfig.no_install_from_api?
+            raise UsageError,
+                  "`brew desc --search` needs `HOMEBREW_REQUIRE_TAP_TRUST=1` or " \
+                  "`HOMEBREW_NO_REQUIRE_TAP_TRUST=1` set!"
           end
 
           query = args.named.join(" ")
@@ -63,8 +66,7 @@ module Homebrew
           when Formula
             desc[formula_or_cask.full_name] = formula_or_cask.desc
           when Cask::Cask
-            description = formula_or_cask.desc.presence || Formatter.warning("[no description]")
-            desc[formula_or_cask.full_name] = "(#{formula_or_cask.name.join(", ")}) #{description}"
+            desc[formula_or_cask.full_name] = [formula_or_cask.name.join(", "), formula_or_cask.desc.presence]
           else
             raise TypeError, "Unsupported formula_or_cask type: #{formula_or_cask.class}"
           end

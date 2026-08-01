@@ -10,9 +10,9 @@ module Homebrew
           @executable ||= T.let(which("systemctl"), T.nilable(Pathname))
         end
 
-        sig { void }
-        def self.reset_executable!
-          @executable = nil
+        class << self
+          sig { params(executable: T.nilable(Pathname)).returns(T.nilable(Pathname)) }
+          attr_writer :executable
         end
 
         sig { returns(String) }

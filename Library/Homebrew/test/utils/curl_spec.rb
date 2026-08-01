@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "utils/curl"
@@ -301,7 +302,7 @@ RSpec.describe "Utils::Curl" do
   let(:body) do
     body = {}
 
-    body[:default] = <<~EOS
+    body[:default] = <<~HTML
       <!DOCTYPE html>
       <html>
         <head>
@@ -313,7 +314,7 @@ RSpec.describe "Utils::Curl" do
           <p>Hello, world!</p>
         </body>
       </html>
-    EOS
+    HTML
 
     body[:with_carriage_returns] = body[:default].sub("<html>\n", "<html>\r\n\r\n")
 
@@ -378,18 +379,10 @@ RSpec.describe "Utils::Curl" do
       expect(curl_args(*args, connect_timeout: 123.4567).join(" ")).to include("--connect-timeout 123.457")
     end
 
-    it "errors when `:connect_timeout` is not Numeric" do
-      expect { curl_args(*args, connect_timeout: "test") }.to raise_error(TypeError)
-    end
-
     it "uses `--max-time` when `:max_time` is Numeric" do
       expect(curl_args(*args, max_time: 123).join(" ")).to include("--max-time 123")
       expect(curl_args(*args, max_time: 123.4).join(" ")).to include("--max-time 123.4")
       expect(curl_args(*args, max_time: 123.4567).join(" ")).to include("--max-time 123.457")
-    end
-
-    it "errors when `:max_time` is not Numeric" do
-      expect { curl_args(*args, max_time: "test") }.to raise_error(TypeError)
     end
 
     it "uses `--retry 3` when HOMEBREW_CURL_RETRIES is unset" do
@@ -411,17 +404,9 @@ RSpec.describe "Utils::Curl" do
       expect(curl_args(*args, retries: -1).join(" ")).not_to include("--retry")
     end
 
-    it "errors when `:retries` is not Numeric" do
-      expect { curl_args(*args, retries: "test") }.to raise_error(TypeError)
-    end
-
     it "uses `--retry-max-time` when `:retry_max_time` is Numeric" do
       expect(curl_args(*args, retry_max_time: 123).join(" ")).to include("--retry-max-time 123")
       expect(curl_args(*args, retry_max_time: 123.4).join(" ")).to include("--retry-max-time 123")
-    end
-
-    it "errors when `:retry_max_time` is not Numeric" do
-      expect { curl_args(*args, retry_max_time: "test") }.to raise_error(TypeError)
     end
 
     it "uses `--show-error` when :show_error is `true`" do
@@ -614,6 +599,60 @@ RSpec.describe "Utils::Curl" do
     end
   end
 
+  describe "::no_insecure_redirect_curl_args" do
+    before do
+      allow(Homebrew::EnvConfig).to receive(:no_insecure_redirect?).and_return(true)
+    end
+
+    it "only allows HTTPS redirects for redirect-following calls" do
+      expect(no_insecure_redirect_curl_args(["--location", "http://example.com/example.tar.gz"]))
+        .to eq(["--proto-redir", "=https", "--location", "http://example.com/example.tar.gz"])
+    end
+
+    it "drops custom redirect protocol arguments" do
+      expect(no_insecure_redirect_curl_args(["--location", "--proto-redir", "=all",
+                                             "https://example.com/example.tar.gz"]))
+        .to eq(["--proto-redir", "=https", "--location", "https://example.com/example.tar.gz"])
+    end
+
+    it "drops custom redirect protocol arguments in assignment form" do
+      expect(no_insecure_redirect_curl_args(["--location", "--proto-redir=all",
+                                             "https://example.com/example.tar.gz"]))
+        .to eq(["--proto-redir", "=https", "--location", "https://example.com/example.tar.gz"])
+    end
+  end
+
+  describe "::curl_output" do
+    it "enforces HTTPS redirects before running curl" do
+      allow(Homebrew::EnvConfig).to receive(:no_insecure_redirect?).and_return(true)
+
+      expect(self).to receive(:system_command).with(
+        /curl/,
+        hash_including(args: array_including("--proto-redir", "=https")),
+      ).and_return(
+        instance_double(SystemCommand::Result, success?: true, stdout: ""),
+      )
+
+      curl_output("--location", "https://example.com/example.tar.gz")
+    end
+
+    it "does not expand deferred environment placeholders" do
+      ENV["HOMEBREW_PRIVATE_TOKEN"] = "glpat-secret"
+      url = ENV.clear_sensitive_environment_for_eval! do
+        "https://example.com/example.tar.gz?private_token=#{ENV.fetch("HOMEBREW_PRIVATE_TOKEN", nil)}"
+      end
+
+      expect(self).to receive(:system_command).with(
+        /curl/,
+        hash_including(args: array_including(url)),
+      ).and_return(
+        instance_double(SystemCommand::Result, success?: true, stdout: ""),
+      )
+
+      curl_output(url)
+    end
+  end
+
   describe "::http_status_ok?" do
     it "returns `true` when `status` is 1xx or 2xx" do
       expect(http_status_ok?("200")).to be(true)
@@ -625,6 +664,28 @@ RSpec.describe "Utils::Curl" do
 
     it "returns `false` when `status` is `nil`" do
       expect(http_status_ok?(nil)).to be(false)
+    end
+  end
+
+  describe "::strip_progress_bar" do
+    it "removes the percentage when other text is glued directly onto it" do
+      glued = "############# 100.0%curl: (7) Failed to connect to example.com port 443: Couldn't connect to server"
+      expected = "curl: (7) Failed to connect to example.com port 443: Couldn't connect to server"
+      expect(strip_progress_bar(glued)).to eq(expected)
+    end
+
+    it "reduces a completed progress bar with nothing else on the line to an empty string" do
+      expect(strip_progress_bar("############# 100.0%")).to eq("")
+    end
+
+    it "leaves plain curl diagnostics without a progress bar unchanged" do
+      message = "curl: (6) Could not resolve host: example.com"
+      expect(strip_progress_bar(message)).to eq(message)
+    end
+
+    it "only strips the line that actually has a progress bar" do
+      glued = "Warning: retrying\n### 50.0%curl: (7) timeout"
+      expect(strip_progress_bar(glued)).to eq("Warning: retrying\ncurl: (7) timeout")
     end
   end
 

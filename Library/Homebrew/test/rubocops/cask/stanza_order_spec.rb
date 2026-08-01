@@ -1,8 +1,16 @@
+# typed: false
 # frozen_string_literal: true
 
 require "rubocops/rubocop-cask"
 
 RSpec.describe RuboCop::Cop::Cask::StanzaOrder, :config do
+  it "registers system conditionals after os stanzas" do
+    expect(RuboCop::Cask::Constants::STANZA_GROUPS.take(2)).to eq([
+      [:arch, :on_arch_conditional, :os, :on_system_conditional],
+      [:version, :sha256],
+    ])
+  end
+
   it "accepts a sole stanza" do
     expect_no_offenses <<~CASK
       cask 'foo' do
@@ -37,6 +45,94 @@ RSpec.describe RuboCop::Cop::Cask::StanzaOrder, :config do
       cask 'foo' do
         version :latest
         sha256 :no_check
+      end
+    CASK
+  end
+
+  it "orders `appimage` after `app`" do
+    expect_offense <<~CASK
+      cask 'foo' do
+        appimage 'Foo.AppImage'
+        ^^^^^^^^^^^^^^^^^^^^^^^ `appimage` stanza out of order
+        app 'Foo.app'
+        ^^^^^^^^^^^^^ `app` stanza out of order
+      end
+    CASK
+
+    expect_correction <<~CASK
+      cask 'foo' do
+        app 'Foo.app'
+        appimage 'Foo.AppImage'
+      end
+    CASK
+  end
+
+  it "orders `generated_script` before `installer`" do
+    expect_offense <<~CASK
+      cask 'foo' do
+        installer script: 'installer.sh'
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `installer` stanza out of order
+        generated_script 'installer.sh', content: '#!/bin/sh'
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `generated_script` stanza out of order
+      end
+    CASK
+
+    expect_correction <<~CASK
+      cask 'foo' do
+        generated_script 'installer.sh', content: '#!/bin/sh'
+        installer script: 'installer.sh'
+      end
+    CASK
+  end
+
+  it "orders `command_wrapper` after `binary`" do
+    expect_offense <<~CASK
+      cask 'foo' do
+        command_wrapper 'foo', executable: 'Foo.app/Contents/MacOS/foo'
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `command_wrapper` stanza out of order
+        binary 'foo'
+        ^^^^^^^^^^^^ `binary` stanza out of order
+      end
+    CASK
+
+    expect_correction <<~CASK
+      cask 'foo' do
+        binary 'foo'
+        command_wrapper 'foo', executable: 'Foo.app/Contents/MacOS/foo'
+      end
+    CASK
+  end
+
+  it "orders legacy flight blocks after matching install step blocks" do
+    expect_offense <<~CASK
+      cask 'foo' do
+        version :latest
+        sha256 :no_check
+
+        postflight do
+        ^^^^^^^^^^^^^ `postflight` stanza out of order
+          next
+        end
+
+        postflight_steps do
+        ^^^^^^^^^^^^^^^^^^^ `postflight_steps` stanza out of order
+          touch "foo"
+        end
+      end
+    CASK
+
+    expect_correction <<~CASK
+      cask 'foo' do
+        version :latest
+        sha256 :no_check
+
+        postflight_steps do
+          touch "foo"
+        end
+
+        postflight do
+          next
+        end
       end
     CASK
   end

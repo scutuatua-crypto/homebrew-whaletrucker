@@ -2,12 +2,15 @@
 # frozen_string_literal: true
 
 module Utils
+  # Helper methods for outputting messages in Homebrew's formats.
   module Output
+    # Mixin used to add these helpers to stdout and stderr.
     module Mixin
       extend T::Helpers
 
       requires_ancestor { Kernel }
 
+      # Keep in sync with `ohai` in Library/Homebrew/utils.sh.
       sig { params(title: String).returns(String) }
       def ohai_title(title)
         verbose = if respond_to?(:verbose?)
@@ -60,10 +63,23 @@ module Utils
       # Print a warning message.
       #
       # @api public
+      # Keep in sync with `opoo` in Library/Homebrew/utils.sh.
       sig { params(message: T.any(String, Exception)).void }
       def opoo(message)
         require "utils/github/actions"
         return if GitHub::Actions.puts_annotation_if_env_set!(:warning, message.to_s)
+
+        require "utils/formatter"
+
+        Tty.with($stderr) do |stderr|
+          stderr.puts Formatter.warning(message, label: "Warning")
+        end
+      end
+
+      sig { params(message: T.any(String, Exception)).void }
+      def opoo_without_github_actions_annotation(message)
+        require "utils/github/actions"
+        return opoo(message) unless GitHub::Actions.env_set?
 
         require "utils/formatter"
 
@@ -86,6 +102,7 @@ module Utils
       # Print an error message.
       #
       # @api public
+      # Keep in sync with `onoe` in Library/Homebrew/utils.sh.
       sig { params(message: T.any(String, Exception)).void }
       def onoe(message)
         require "utils/github/actions"
@@ -107,9 +124,29 @@ module Utils
         Homebrew.failed = true
       end
 
+      sig { params(issues_url: String, homebrew: T::Boolean, read_this: T::Boolean).returns(String) }
+      def issue_reporting_message(issues_url, homebrew: false, read_this: false)
+        formatted_issues_url = Formatter.url(issues_url)
+
+        if read_this
+          Formatter.error(formatted_issues_url, label: "READ THIS")
+        elsif homebrew
+          <<~EOS
+            #{Tty.bold}Please report this issue:#{Tty.reset}
+              #{formatted_issues_url}
+          EOS
+        else
+          <<~EOS
+            If reporting this issue please do so at (not Homebrew/* repositories):
+              #{formatted_issues_url}
+          EOS
+        end
+      end
+
       # Print an error message and fail immediately.
       #
       # @api public
+      # Keep in sync with `odie` in Library/Homebrew/utils.sh.
       sig { params(error: T.any(String, Exception)).returns(T.noreturn) }
       def odie(error)
         onoe error
@@ -212,6 +249,8 @@ module Utils
         odeprecated(method, replacement, disable: true, disable_on:, disable_for_developers:, caller:)
       end
 
+      # Keep status labels, colours and emoji in sync with
+      # `pretty_installed` in Library/Homebrew/utils.sh.
       sig { params(string: String).returns(String) }
       def pretty_installed(string)
         if !$stdout.tty?
@@ -223,38 +262,120 @@ module Utils
         end
       end
 
-      sig { params(string: String).returns(String) }
-      def pretty_outdated(string)
+      sig { params(string: String, bold: T::Boolean).returns(String) }
+      def pretty_upgradable(string, bold: true)
+        weight = bold ? Tty.bold.to_s : ""
         if !$stdout.tty?
           string
         elsif Homebrew::EnvConfig.no_emoji?
-          Formatter.error("#{Tty.bold}#{string} (outdated)#{Tty.reset}")
+          "#{weight}#{string} (upgradable)#{Tty.reset}"
         else
-          "#{Tty.bold}#{string} #{Formatter.warning("⚠")}#{Tty.reset}"
+          "#{weight}#{string} #{Formatter.success("↑")}#{Tty.reset}"
         end
       end
 
       sig { params(string: String).returns(String) }
-      def pretty_uninstalled(string)
+      def pretty_deprecated(string)
+        if $stdout.tty?
+          "#{string} #{Formatter.warning("(deprecated)")}"
+        else
+          string
+        end
+      end
+
+      sig { params(string: String).returns(String) }
+      def pretty_disabled(string)
+        if $stdout.tty?
+          "#{string} #{Formatter.error("(disabled)")}"
+        else
+          string
+        end
+      end
+
+      # Keep status labels, colours and emoji in sync with
+      # `pretty_uninstalled` in Library/Homebrew/utils.sh.
+      sig { params(string: String, bold: T::Boolean).returns(String) }
+      def pretty_uninstalled(string, bold: true)
+        weight = bold ? Tty.bold.to_s : ""
         if !$stdout.tty?
           string
         elsif Homebrew::EnvConfig.no_emoji?
-          Formatter.error("#{Tty.bold}#{string} (uninstalled)#{Tty.reset}")
+          Formatter.error("#{weight}#{string} (uninstalled)#{Tty.reset}")
         else
-          "#{Tty.bold}#{string} #{Formatter.error("✘")}#{Tty.reset}"
+          "#{weight}#{string} #{Formatter.error("✘")}#{Tty.reset}"
+        end
+      end
+
+      sig { params(string: String, bold: T::Boolean).returns(String) }
+      def pretty_unmarked(string, bold: true)
+        if bold && $stdout.tty?
+          "#{Tty.bold}#{string}#{Tty.reset}"
+        else
+          string
+        end
+      end
+
+      sig { params(string: String, bold: T::Boolean).returns(String) }
+      def pretty_warning(string, bold: true)
+        weight = bold ? Tty.bold.to_s : ""
+        if !$stdout.tty?
+          string
+        elsif Homebrew::EnvConfig.no_emoji?
+          Formatter.warning("#{weight}#{string} (warning)#{Tty.reset}")
+        else
+          "#{weight}#{string} #{Formatter.warning("⚠")}#{Tty.reset}"
+        end
+      end
+
+      sig {
+        params(string: String, installed: T::Boolean, warning: T::Boolean, outdated: T::Boolean,
+               deprecated: T::Boolean, disabled: T::Boolean, mark_uninstalled: T::Boolean,
+               bold: T.nilable(T::Boolean)).returns(String)
+      }
+      def pretty_install_status(string, installed:, warning: false, outdated: false, deprecated: false,
+                                disabled: false, mark_uninstalled: true, bold: nil)
+        bold = installed if bold.nil?
+        status = if warning
+          pretty_warning(string, bold:)
+        elsif installed && outdated
+          pretty_upgradable(string, bold:)
+        elsif installed
+          pretty_installed(string)
+        elsif mark_uninstalled
+          pretty_uninstalled(string, bold:)
+        else
+          pretty_unmarked(string, bold:)
+        end
+        if disabled
+          pretty_disabled(status)
+        elsif deprecated
+          pretty_deprecated(status)
+        else
+          status
         end
       end
 
       sig { params(seconds: T.nilable(T.any(Integer, Float))).returns(String) }
       def pretty_duration(seconds)
         seconds = seconds.to_i
+        hide_seconds = seconds > 300
+
+        minutes, seconds = seconds.divmod(60)
+        hours, minutes = minutes.divmod(60)
+
         res = +""
 
-        if seconds > 59
-          minutes = seconds / 60
-          seconds %= 60
-          res = +Utils.pluralize("minute", minutes, include_count: true)
-          return res.freeze if seconds.zero?
+        if hours.positive?
+          res << Utils.pluralize("hour", hours, include_count: true)
+          return res.freeze if minutes.zero?
+
+          res << " " << Utils.pluralize("minute", minutes, include_count: true)
+          return res.freeze
+        end
+
+        if minutes.positive?
+          res << Utils.pluralize("minute", minutes, include_count: true)
+          return res.freeze if hide_seconds || seconds.zero?
 
           res << " "
         end

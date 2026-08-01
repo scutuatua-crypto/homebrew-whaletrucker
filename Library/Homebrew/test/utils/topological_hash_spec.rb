@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "utils/topological_hash"
@@ -28,23 +29,27 @@ RSpec.describe Utils::TopologicalHash do
   describe "::graph_package_dependencies" do
     it "returns a topological hash" do
       formula1 = formula "homebrew-test-formula1" do
+        T.bind(self, T.class_of(Formula))
         url "foo"
         version "0.5"
       end
 
       formula2 = formula "homebrew-test-formula2" do
+        T.bind(self, T.class_of(Formula))
         url "foo"
         version "0.5"
         depends_on "homebrew-test-formula1"
       end
 
       formula3 = formula "homebrew-test-formula3" do
+        T.bind(self, T.class_of(Formula))
         url "foo"
         version "0.5"
         depends_on "homebrew-test-formula4"
       end
 
       formula4 = formula "homebrew-test-formula4" do
+        T.bind(self, T.class_of(Formula))
         url "foo"
         version "0.5"
         depends_on "homebrew-test-formula3"
@@ -89,7 +94,8 @@ RSpec.describe Utils::TopologicalHash do
       })
 
       sorted = [formula1, cask1, cask2, cask3, formula2]
-      expect(described_class.graph_package_dependencies([cask3, cask2, cask1, formula2, formula1]).tsort).to eq sorted
+      expect(described_class.graph_package_dependencies([cask3, cask2, cask1, formula2,
+                                                         formula1]).tsort).to eq sorted
       expect(described_class.graph_package_dependencies([cask3, formula2]).tsort).to eq sorted
 
       expect { described_class.graph_package_dependencies([formula3, formula4]).tsort }.to raise_error TSort::Cyclic

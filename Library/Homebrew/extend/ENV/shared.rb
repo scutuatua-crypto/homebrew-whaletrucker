@@ -36,9 +36,6 @@ module SharedEnvExtension
   ].freeze
   private_constant :SANITIZED_VARS
 
-  sig { returns(T.nilable(T::Boolean)) }
-  attr_reader :build_bottle
-
   sig { returns(T.nilable(String)) }
   attr_reader :bottle_arch
 
@@ -62,6 +59,12 @@ module SharedEnvExtension
     @testing_formula = T.let(testing_formula, T.nilable(T::Boolean))
     reset
   end
+
+  sig { returns(T::Boolean) }
+  def build_bottle? = @build_bottle == true
+
+  sig { returns(T::Boolean) }
+  def debug_symbols? = @debug_symbols == true
 
   sig { void }
   def reset

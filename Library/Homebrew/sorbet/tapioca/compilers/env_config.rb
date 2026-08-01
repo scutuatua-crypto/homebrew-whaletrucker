@@ -25,11 +25,11 @@ module Tapioca
 
           dynamic_methods.each do |method, default|
             return_type = if method.end_with?("?")
-              T::Boolean
+              "T::Boolean"
             elsif default
-              default.class
+              "String"
             else
-              T.nilable(String)
+              "T.nilable(::String)"
             end
 
             mod.create_method(method, return_type:, class_method: true)

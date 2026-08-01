@@ -40,4 +40,7 @@ class Homebrew::DevCmd::StyleCmd::Args < Homebrew::CLI::Args
 
   sig { returns(T::Boolean) }
   def reset_cache?; end
+
+  sig { returns(T::Boolean) }
+  def todo?; end
 end

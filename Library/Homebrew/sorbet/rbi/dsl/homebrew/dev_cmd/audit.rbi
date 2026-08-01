@@ -82,7 +82,4 @@ class Homebrew::DevCmd::Audit::Args < Homebrew::CLI::Args
 
   sig { returns(T::Boolean) }
   def strict?; end
-
-  sig { returns(T::Boolean) }
-  def token_conflicts?; end
 end

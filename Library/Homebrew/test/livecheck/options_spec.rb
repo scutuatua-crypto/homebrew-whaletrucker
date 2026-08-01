@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "livecheck/options"
@@ -16,9 +17,9 @@ RSpec.describe Homebrew::Livecheck::Options do
       string:  "a + b = c",
     }
   end
-
   let(:args) do
     {
+      compressed:    false,
       cookies:       cookies,
       header:        header_string,
       homebrew_curl: true,
@@ -34,7 +35,6 @@ RSpec.describe Homebrew::Livecheck::Options do
     }
   end
   let(:merged_hash) { args.merge(other_args) }
-
   let(:base_options) { options.new(**args) }
   let(:other_options) { options.new(**other_args) }
   let(:merged_options) { options.new(**merged_hash) }
@@ -42,6 +42,7 @@ RSpec.describe Homebrew::Livecheck::Options do
   describe "#url_options" do
     it "returns a Hash of the options that are provided as arguments to the `url` DSL method" do
       expect(options.new.url_options).to eq({
+        compressed:    nil,
         cookies:       nil,
         header:        nil,
         homebrew_curl: nil,
@@ -139,21 +140,15 @@ RSpec.describe Homebrew::Livecheck::Options do
   end
 
   describe "#empty?" do
-    it "returns true if object has only default values" do
+    specify do
       expect(options.new.empty?).to be true
-    end
-
-    it "returns false if object has any non-default values" do # rubocop:todo RSpec/AggregateExamples
       expect(options.new(**args).empty?).to be false
     end
   end
 
   describe "#present?" do
-    it "returns false if object has only default values" do
+    specify do
       expect(options.new.present?).to be false
-    end
-
-    it "returns true if object has any non-default values" do # rubocop:todo RSpec/AggregateExamples
       expect(options.new(**args).present?).to be true
     end
   end

@@ -1,7 +1,8 @@
 ---
-last_review_date: "2025-11-26"
+last_review_date: "2026-07-18"
 ---
-# How To Organise the AGM
+
+# How to Organise the AGM
 
 The Annual General Meeting (AGM) is our combination of a business meeting, yearly work planning session, and opportunity to meet others in our international team in person.
 
@@ -11,7 +12,7 @@ If a situation occurs that prevents that, it is acceptable to execute it virtual
 <!-- TOC start -->
 
 * [Roles](#roles)
-* [Logistics Timeline](#logistics-timeline)
+* [Logistics timeline](#logistics-timeline)
   * [Two months prior](#two-months-prior)
   * [Four weeks prior](#four-weeks-prior)
   * [Three weeks prior](#three-weeks-prior)
@@ -21,9 +22,9 @@ If a situation occurs that prevents that, it is acceptable to execute it virtual
   * [Day before](#day-before)
   * [Day-of](#day-of)
 * [Pre-planning](#pre-planning)
-  * [Finding a Meeting Venue](#finding-a-meeting-venue)
-  * [Who Qualifies For AGM Travel Assistance](#who-qualifies-for-agm-travel-assistance)
-  * [Dietary Requirements](#dietary-requirements)
+  * [Finding a meeting venue](#finding-a-meeting-venue)
+  * [Who qualifies for AGM travel assistance](#who-qualifies-for-agm-travel-assistance)
+  * [Dietary requirements](#dietary-requirements)
 
 <!-- TOC end -->
 
@@ -31,38 +32,33 @@ If a situation occurs that prevents that, it is acceptable to execute it virtual
 
 Expected participants:
 
-|Who|Role|
-|---|---|
-|Project Leader (PL)|Should be physically present if possible, dialed-in if not. Regardless, needed to provide content for meeting.|
-|Lead Maintainers (LM)|Should be physically present if possible, dialed-in if not. Regardless, needed to provide content for meeting.|
-|Maintainers|Should dial-in or participate in person if possible.|
+| Who                   | Role                                                                                           |
+| --------------------- | ---------------------------------------------------------------------------------------------- |
+| Project Leader (PL)   | Should be physically present if possible and dialled in otherwise, providing meeting content.  |
+| Lead Maintainers (LM) | Should be physically present if possible and dialled in otherwise, providing meeting content.  |
+| Maintainers           | Should dial in or participate in person if possible.                                          |
 
 Delegated maintainer roles of responsibility for planning and execution:
 
-|Who|Role|
-|---|---|
-|Logistics Coordinator (LC)|Coordinates with meeting venue, restaurants, vendors, maintainers|
-|Agenda Coordinator (AC)|Coordinates agenda and content to be presented|
-|Technology Coordinator (TC)|Coordinates video conference audiovisual setup|
+| Who                         | Role                                                                     |
+| --------------------------- | ------------------------------------------------------------------------ |
+| Logistics Coordinator (LC)  | Coordinates with the meeting venue, restaurants, vendors and maintainers. |
+| Agenda Coordinator (AC)     | Coordinates the agenda and content to be presented.                      |
+| Technology Coordinator (TC) | Coordinates the video-conference audiovisual setup.                      |
 
 A person may have more than one role but one person should not have all roles.
 
-## Logistics Timeline
+## Logistics timeline
 
-Past practice and future intent is for AGM to coincide with [FOSDEM](https://fosdem.org "Free and Open Source Developers European Meeting"), which is held in Brussels, Belgium annually typically on the Saturday and Sunday of the fifth ISO-8601 week of the calendar year, calculable with:
+Past practice is for the AGM to coincide with [FOSDEM](https://fosdem.org "Free and Open Source Developers European Meeting") in Brussels, Belgium.
+The AGM is normally held on the Friday before FOSDEM or the following Monday.
 
-    ruby -rdate -e "s=ARGV[0].to_i;s.upto(s+4).map{|y|Date.commercial(y,5,6)}.each{|y|puts [y,y+1].join(' - ')}" 2026
-
-AGM should be held on the Friday before or the Monday following FOSDEM.
-
-:information_source: _Regenerate the dates for the WHEN lines in the next several headers
-using this quick command:_
-
-    ruby -rdate -e "YEAR=ARGV[0].to_i;puts ([[49,YEAR-1]]+(1.upto(4).map{|wk|[wk, YEAR]})).map{|wk,yr|Date.commercial(yr,wk).to_s}" 2026
+Confirm the published FOSDEM dates before opening travel approval or making reservations.
+Use the relative timeline below and record year-specific dates in the private planning issue or project rather than embedding them in this reusable guide.
 
 ### Two months prior
 
-**When:** Week 49 of YEAR-1 :date: `2025-12-01`
+**When:** Approximately two months before the AGM.
 
 * [ ] LC: Seek informal count of maintainers intending to attend in person.
 * [ ] PL: Review maintainer activity per [Homebrew Governance](Homebrew-Governance.md).
@@ -70,26 +66,28 @@ using this quick command:_
   * This is primarily to enable maintainers to begin planning travel by
     asking for time off, requesting employer reimbursement,
     arranging childcare or pet sitters,
-    [applying for a visa](https://5195.f2w.bosa.be/en/themes/entry/border-control/visa/visa-type-c)
-    which may [take 2–7 weeks](https://dofi.ibz.be/en/themes/third-country-nationals/short-stay/processing-time-visa-application),
+    [applying for a visa](https://5195.f2w.bosa.be/en/themes/entry/border-control/visa/visa-type-c),
+    which may [take two to seven weeks](https://dofi.ibz.be/en/themes/third-country-nationals/short-stay/processing-time-visa-application),
     etc.
-* [ ] PL: Remind those traveling from countries exempt from EU visa requirements (e.g. US, UK, AU, CA) to file for [ETIAS travel authorization](https://travel-europe.europa.eu/etias_en) (generally processed in minutes but could take up to 30 days), advisable to get processed _before_ buying airfare.
+* [ ] PL: Check the [official EU travel requirements](https://travel-europe.europa.eu/etias_en) for each traveller's nationality and travel dates.
+  Do not direct travellers to apply unless the official page says the service is operating.
+  Once it is operating, allow for the published maximum processing time before non-refundable travel is purchased.
 
 ### Four weeks prior
 
-**When:** Week 1 of YEAR :date: `2025-12-29`
+**When:** Approximately four weeks before the AGM.
 
 * [ ] PL: Solicit changes to [Homebrew Governance](Homebrew-Governance.md) in the form of PRs to the `private` repository.
 
 ### Three weeks prior
 
-**When:** Week 2 of YEAR :date: `2026-01-05`
+**When:** Approximately three weeks before the AGM.
 
 * [ ] PL: Close travel assistance pre-approval process.
 
 ### Two weeks prior
 
-**When:** Week 3 of YEAR :date: `2025-01-06`
+**When:** Approximately two weeks before the AGM.
 
 * [ ] AC: Create agenda, solicit agenda items from PL and LM.
 * [ ] LC: Seek committed maintainer attendance and dietary requirements for each.
@@ -97,13 +95,13 @@ using this quick command:_
 
 ### 10 days prior
 
-**When:** Week 3 of YEAR :date: `2026-01-12`
+**When:** 10 days before the AGM.
 
 * [ ] PL: Resolve all open Governance PRs, roll-up changes, and open PR with changes to `docs/Homebrew-Governance.md` on `homebrew/brew`.
 
 ### One week prior
 
-**When:** Week 4 of YEAR :date: `2026-01-19`
+**When:** One week before the AGM.
 
 * [ ] PL: Open voting for PL and Governance changes.
 * [ ] AC: Solicit agenda items from maintainers.
@@ -117,18 +115,18 @@ using this quick command:_
 ### Day-of
 
 * [ ] LC: Confirm reservation count for dinner with venue
-* [ ] TC: Connect to video conference, ensure audiovisual equipment is ready and appropriately placed and leveled periodically
-* [ ] AC: Keep the meeting paced to the agenda, keep time for timeboxed discussions, cut people off if they're talking too long, ensure remote attendees can get a word in
+* [ ] TC: Connect to the video conference and ensure that audiovisual equipment is ready, appropriately placed and periodically levelled.
+* [ ] AC: Keep the meeting to the agenda and time-boxed discussion limits while ensuring remote attendees can participate.
 
 ## Pre-planning
 
-### Finding a Meeting Venue
+### Finding a meeting venue
 
 In the past, Homebrew hosted the AGM at the
 [THON Hotel Brussels City Centre](https://www.thonhotels.com/conference/belgium/brussels/thon-hotel-brussels-city-centre/?Persons=20)
 and arranged for a room block checking in the day before FOSDEM and AGM weekend, generally on Friday, and checking out the day after, generally Tuesday when the AGM is Monday.
 
-### Who Qualifies For AGM Travel Assistance
+### Who qualifies for AGM travel assistance
 
 Travel assistance is available for AGM participants who are expected to attend the AGM in-person.
 Those who have employers able to cover all or a part of the costs of attending FOSDEM should exhaust that
@@ -139,6 +137,6 @@ PL, LM and maintainers can expect to have all reasonable, in-policy expenses cov
 See also the [Expense and Reimbursement Travel Policy](Expense-and-Reimbursement-Policy.md#travel-policy) for process and details on what is covered.
 It is important that all attendees expecting reimbursement stay in-policy.
 
-### Dietary Requirements
+### Dietary requirements
 
 Track dietary requirements centrally for in-person participants.

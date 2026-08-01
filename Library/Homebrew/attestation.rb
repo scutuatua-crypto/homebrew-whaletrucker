@@ -30,7 +30,7 @@ module Homebrew
     # malicious backfilled signatures.
     #
     # @api private
-    BACKFILL_CUTOFF = T.let(DateTime.new(2024, 3, 14).freeze, DateTime)
+    BACKFILL_CUTOFF = DateTime.new(2024, 3, 14).freeze
 
     # Raised when the attestation was not found.
     #
@@ -60,23 +60,13 @@ module Homebrew
     # @api private
     class GhIncompatible < RuntimeError; end
 
-    # Returns whether attestation verification is enabled.
-    #
-    # @api private
-    sig { returns(T::Boolean) }
-    def self.enabled?
-      return false if Homebrew::EnvConfig.no_verify_attestations?
-
-      Homebrew::EnvConfig.verify_attestations?
-    end
-
     # Returns a path to a suitable `gh` executable for attestation verification.
     #
     # @api private
     sig { returns(Pathname) }
     def self.gh_executable
       @gh_executable ||= T.let(nil, T.nilable(Pathname))
-      return @gh_executable if @gh_executable.present?
+      return @gh_executable if @gh_executable
 
       # NOTE: We set HOMEBREW_NO_VERIFY_ATTESTATIONS when installing `gh` itself,
       #       to prevent a cycle during bootstrapping. This can eventually be resolved
@@ -120,7 +110,7 @@ module Homebrew
     # @api private
     sig {
       params(bottle: Bottle, signing_repo: String,
-             signing_workflow: T.nilable(String), subject: T.nilable(String)).returns(T::Hash[T.untyped, T.untyped])
+             signing_workflow: T.nilable(String), subject: T.nilable(String)).returns(T::Hash[String, T.untyped])
     }
     def self.check_attestation(bottle, signing_repo, signing_workflow = nil, subject = nil)
       cmd = ["attestation", "verify", bottle.cached_download, "--repo", signing_repo, "--format",
@@ -138,16 +128,20 @@ module Homebrew
                                  env: { "GH_TOKEN" => credentials, "GH_HOST" => "github.com" },
                                  secrets: [credentials], print_stderr: false, chdir: HOMEBREW_TEMP)
       rescue ErrorDuringExecution => e
-        if e.status.exitstatus == 1 && e.stderr.include?("unknown command")
+        if e.exitstatus == 1 && e.stderr.include?("unknown command")
           raise GhIncompatible, "gh CLI is incompatible with attestations"
         end
 
         # Even if we have credentials, they may be invalid or malformed.
-        if e.status.exitstatus == 4 || e.stderr.include?("HTTP 401: Bad credentials")
+        if e.exitstatus == 4 || e.stderr.include?("HTTP 401: Bad credentials")
           raise GhAuthInvalid, "invalid credentials"
         end
 
-        raise MissingAttestationError, "attestation not found: #{e}" if e.stderr.include?("HTTP 404: Not Found")
+        # The API used to return 404 but now can return 200 with an empty array.
+        # We match the no attestation case precisely as there are similarly worded errors.
+        if e.stderr.include?("HTTP 404: Not Found") || e.stderr.match?(/: no attestations found\R/)
+          raise MissingAttestationError, "attestation not found: #{e}"
+        end
 
         raise InvalidAttestationError, "attestation verification failed: #{e}"
       end
@@ -165,7 +159,7 @@ module Homebrew
       # in a single attestation, so we check every subject in each attestation
       # and select the first attestation with a matching subject.
       # In particular, this happens with v2.0.0 and later of the
-      # `actions/attest-build-provenance` action.
+      # `actions/attest` action.
       subject = bottle.filename.to_s if subject.blank?
 
       attestation = if bottle.tag.to_sym == :all
@@ -205,7 +199,7 @@ module Homebrew
     # @raise [InvalidAttestationError] on any verification failures
     #
     # @api private
-    sig { params(bottle: Bottle).returns(T::Hash[T.untyped, T.untyped]) }
+    sig { params(bottle: Bottle).returns(T::Hash[String, T.untyped]) }
     def self.check_core_attestation(bottle)
       begin
         # Ideally, we would also constrain the signing workflow here, but homebrew-core
@@ -229,16 +223,18 @@ module Homebrew
         # This was originally unintentional, but has a virtuous side effect of further
         # limiting domain separation on the backfilled signatures (by committing them to
         # their original bottle URLs).
-        url_sha256 = if EnvConfig.bottle_domain == HOMEBREW_BOTTLE_DEFAULT_DOMAIN
-          Digest::SHA256.hexdigest(bottle.url)
-        else
+        url_sha256 = if EnvConfig.bottle_domain_custom?
           # If our bottle is coming from a mirror, we need to recompute the expected
           # non-mirror URL to make the hash match.
+          checksum = bottle.resource.checksum
+          odie "#{bottle.resource.name} checksum is nil" if checksum.nil?
           path, = Utils::Bottles.path_resolved_basename HOMEBREW_BOTTLE_DEFAULT_DOMAIN, bottle.name,
-                                                        bottle.resource.checksum, bottle.filename
+                                                        checksum, bottle.filename
           url = "#{HOMEBREW_BOTTLE_DEFAULT_DOMAIN}/#{path}"
 
           Digest::SHA256.hexdigest(url)
+        else
+          Digest::SHA256.hexdigest(bottle.url)
         end
         subject = "#{url_sha256}--#{bottle.filename}"
 

@@ -1,14 +1,67 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "resource"
-require "erb"
-require "utils/output"
-
-Owner = T.type_alias { T.any(Formula, Resource, SoftwareSpec) }
+require "embedded_patch"
+require "data_patch"
+require "external_patch"
+require "string_patch"
+require "local_patch"
+require "utils/path"
+require "utils/popen"
 
 # Helper module for creating patches.
 module Patch
+  CVE_PATTERN = /CVE-?(\d{4})-(\d{4,})/i
+  GHSA_PATTERN = /\AGHSA(-[23456789cfghjmpqrvwx]{4}){3}\z/
+  # CycloneDX `pedigree.patches.type` values applicable to source diffs.
+  # `monkey` is omitted: it describes runtime modification, which `patch do` cannot express.
+  # Keep in sync with `PATCH_TYPES` in `Library/Homebrew/rubocops/patches.rb`.
+  TYPES = T.let({
+    unofficial:  "A patch that has not been developed by the upstream maintainers " \
+                 "(e.g. a Homebrew- or distribution-specific build fix).",
+    backport:    "A patch that takes code from a newer version of the software and " \
+                 "applies it to the older version Homebrew ships (e.g. an unreleased " \
+                 "upstream security fix).",
+    cherry_pick: "A patch created by selectively applying upstream commits that are " \
+                 "not strictly from a newer release (e.g. a fix from a maintenance branch).",
+  }.freeze, T::Hash[Symbol, String])
+
+  sig { params(strings: String).returns(T::Array[String]) }
+  def self.extract_cves(*strings)
+    strings.flat_map { |s| s.scan(CVE_PATTERN) }
+           .map { |year, id| "CVE-#{year}-#{id}" }
+           .uniq
+  end
+
+  sig { params(id: String).returns(String) }
+  def self.resolves_type(id)
+    return "security" if id.match?(/\ACVE-\d{4}-\d{4,}\z/) || id.match?(GHSA_PATTERN)
+
+    "defect"
+  end
+
+  # Reject patch target paths (absolute or `..`-traversing) that escape the staged source tree.
+  sig { params(text: String, strip: T.any(Symbol, String), base: Pathname).void }
+  def self.ensure_targets_within!(text, strip:, base:)
+    # Resolve targets with `patch --dry-run` so containment matches what `patch`
+    # actually writes, covering `Index:`/`====` and non-selected context headers.
+    output = with_env(LC_ALL: "C", LANG: "C") do
+      base.cd do
+        Utils.popen_write("patch", "-g", "0", "-f", "-#{strip}", "--dry-run", err: :out) { |p| p.write(text) }
+      end
+    end
+
+    output.each_line do |line|
+      next unless (target = line.chomp[/\A(?:patching|checking) file (.+)\z/, 1])
+
+      target = target.delete_prefix("'").delete_suffix("'") if target.start_with?("'") && target.end_with?("'")
+      Utils::Path.ensure_child_of!(
+        base, base/target,
+        message: "Patch target path escapes the staged source tree: #{target}"
+      )
+    end
+  end
+
   sig {
     params(
       strip: T.any(Symbol, String),
@@ -29,173 +82,18 @@ module Patch
       when String
         StringPatch.new(strip, src)
       else
-        ExternalPatch.new(strip, &block)
-      end
-    end
-  end
-end
+        external_patch = ExternalPatch.new(strip, &block)
+        resource = external_patch.resource
+        if (file = resource.file)
+          raise ArgumentError, "Patch cannot have both `file` and `url`." if resource.url.present?
+          raise ArgumentError, "Patch cannot use `sha256` with `file`." if resource.checksum
+          raise ArgumentError, "Patch cannot use `apply` with `file`." if resource.patch_files.present?
 
-# An abstract class representing a patch embedded into a formula.
-class EmbeddedPatch
-  include Utils::Output::Mixin
-  extend T::Helpers
-
-  abstract!
-
-  sig { params(owner: T.nilable(Owner)).returns(T.nilable(Owner)) }
-  attr_writer :owner
-
-  sig { returns(T.any(String, Symbol)) }
-  attr_reader :strip
-
-  sig { params(strip: T.any(String, Symbol)).void }
-  def initialize(strip)
-    @strip = T.let(strip, T.any(String, Symbol))
-    @owner = T.let(nil, T.nilable(Owner))
-  end
-
-  sig { returns(T::Boolean) }
-  def external?
-    false
-  end
-
-  sig { abstract.returns(String) }
-  def contents; end
-
-  sig { void }
-  def apply
-    data = contents.gsub("@@HOMEBREW_PREFIX@@", HOMEBREW_PREFIX)
-    if data.gsub!("HOMEBREW_PREFIX", HOMEBREW_PREFIX)
-      odeprecated "patch with HOMEBREW_PREFIX placeholder",
-                  "patch with @@HOMEBREW_PREFIX@@ placeholder"
-    end
-    args = %W[-g 0 -f -#{strip}]
-    Utils.safe_popen_write("patch", *args) { |p| p.write(data) }
-  end
-
-  sig { returns(String) }
-  def inspect
-    "#<#{self.class.name}: #{strip.inspect}>"
-  end
-end
-
-# A patch at the `__END__` of a formula file.
-class DATAPatch < EmbeddedPatch
-  sig { returns(T.nilable(Pathname)) }
-  attr_accessor :path
-
-  sig { params(strip: T.any(String, Symbol)).void }
-  def initialize(strip)
-    super
-    @path = T.let(nil, T.nilable(Pathname))
-  end
-
-  sig { override.returns(String) }
-  def contents
-    path = self.path
-    raise ArgumentError, "DATAPatch#contents called before path was set!" unless path
-
-    data = +""
-    path.open("rb") do |f|
-      loop do
-        line = f.gets
-        break if line.nil? || /^__END__$/.match?(line)
-      end
-      while (line = f.gets)
-        data << line
-      end
-    end
-    data.freeze
-  end
-end
-
-# A string containing a patch.
-class StringPatch < EmbeddedPatch
-  sig { params(strip: T.any(String, Symbol), str: String).void }
-  def initialize(strip, str)
-    super(strip)
-    @str = T.let(str, String)
-  end
-
-  sig { override.returns(String) }
-  def contents
-    @str
-  end
-end
-
-# A file containing a patch.
-class ExternalPatch
-  include Utils::Output::Mixin
-
-  extend Forwardable
-
-  sig { returns(Resource::Patch) }
-  attr_reader :resource
-
-  sig { returns(T.any(String, Symbol)) }
-  attr_reader :strip
-
-  def_delegators :resource,
-                 :url, :fetch, :patch_files, :verify_download_integrity,
-                 :cached_download, :downloaded?, :clear_cache
-
-  sig { params(strip: T.any(String, Symbol), block: T.nilable(T.proc.bind(Resource::Patch).void)).void }
-  def initialize(strip, &block)
-    @strip    = T.let(strip, T.any(String, Symbol))
-    @resource = T.let(Resource::Patch.new(&block), Resource::Patch)
-  end
-
-  sig { returns(T::Boolean) }
-  def external?
-    true
-  end
-
-  sig { params(owner: T.nilable(Owner)).void }
-  def owner=(owner)
-    resource.owner = owner
-    resource.version(resource.checksum&.hexdigest || ERB::Util.url_encode(resource.url))
-  end
-
-  sig { void }
-  def apply
-    base_dir = Pathname.pwd
-    resource.unpack do
-      patch_dir = Pathname.pwd
-      if patch_files.empty?
-        children = patch_dir.children
-        if children.length != 1 || !children.fetch(0).file?
-          raise MissingApplyError, <<~EOS
-            There should be exactly one patch file in the staging directory unless
-            the "apply" method was used one or more times in the patch-do block.
-          EOS
-        end
-
-        patch_files << children.fetch(0).basename
-      end
-      dir = base_dir
-      dir /= resource.directory if resource.directory.present?
-      dir.cd do
-        patch_files.each do |patch_file|
-          ohai "Applying #{patch_file}"
-          patch_file = patch_dir/patch_file
-          Utils.safe_popen_write("patch", "-g", "0", "-f", "-#{strip}") do |p|
-            File.foreach(patch_file) do |line|
-              data = line.gsub("@@HOMEBREW_PREFIX@@", HOMEBREW_PREFIX)
-              p.write(data)
-            end
-          end
+          LocalPatch.new(strip, file, resource.directory, resolves: resource.resolves, type: resource.type)
+        else
+          external_patch
         end
       end
     end
-  rescue ErrorDuringExecution => e
-    onoe e
-    f = resource.owner.owner
-    cmd, *args = e.cmd
-    raise BuildError.new(f, cmd, args, ENV.to_hash)
-  end
-
-  sig { returns(String) }
-  def inspect
-    "#<#{self.class.name}: #{strip.inspect} #{url.inspect}>"
   end
 end

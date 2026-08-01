@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "rubocops/urls"
@@ -80,7 +81,57 @@ RSpec.describe RuboCop::Cop::FormulaAudit::HttpUrls do
 
           livecheck do
             url "http://example.com/releases"
-            regex(/foo-(\d+(?:.\d+)+).tar.gz/i)
+            regex(/foo[._-]v?(\d+(?:.\d+)+).t/i)
+          end
+
+          resource "foo" do
+            url "https://example.com/foo-resource-1.0.tar.gz"
+
+            livecheck do
+              url "http://example.com/resource-releases"
+              regex(/foo-resource[._-]v?(\d+(?:.\d+)+).t/i)
+            end
+          end
+        end
+      RUBY
+    end
+
+    it "reports no offense for a livecheck URL symbol" do
+      expect_no_offenses(<<~RUBY, "/homebrew-core/")
+        class Foo < Formula
+          desc "foo"
+          url "https://example.com/foo-1.0.tar.gz"
+
+          livecheck do
+            url :stable
+          end
+        end
+      RUBY
+    end
+
+    it "reports no offense when livecheck has no URL" do
+      expect_no_offenses(<<~RUBY, "/homebrew-core/")
+        class Foo < Formula
+          desc "foo"
+          url "https://example.com/foo-1.0.tar.gz"
+
+          # No URL is present when `skip` is used.
+          livecheck do
+            skip "No version information available"
+          end
+        end
+      RUBY
+    end
+
+    it "reports no offense when livecheck has a `url` call with no argument" do
+      expect_no_offenses(<<~RUBY, "/homebrew-core/")
+        class Foo < Formula
+          desc "foo"
+          url "https://example.com/foo-1.0.tar.gz"
+
+          # This shouldn't ever happen but this is simply to exercise a guard.
+          livecheck do
+            url
           end
         end
       RUBY
@@ -95,7 +146,7 @@ RSpec.describe RuboCop::Cop::FormulaAudit::HttpUrls do
 
           livecheck do
             url "http://example.com/releases"
-            regex(/foo-(\d+(?:.\d+)+).tar.gz/i)
+            regex(/foo[._-]v?(\d+(?:.\d+)+).t/i)
           end
         end
       RUBY

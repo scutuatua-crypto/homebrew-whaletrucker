@@ -1,7 +1,6 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "method_source"
 require "rubocop"
 require_relative "../../../rubocops"
 

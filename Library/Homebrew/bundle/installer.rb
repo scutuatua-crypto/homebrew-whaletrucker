@@ -2,19 +2,41 @@
 # frozen_string_literal: true
 
 require "bundle/dsl"
-require "bundle/formula_installer"
-require "bundle/cask_installer"
-require "bundle/mac_app_store_installer"
-require "bundle/vscode_extension_installer"
-require "bundle/go_installer"
-require "bundle/cargo_installer"
-require "bundle/flatpak_installer"
-require "bundle/tap_installer"
+require "bundle/package_types"
 require "bundle/skipper"
+require "bundle/trust"
+require "trust"
+require "utils/output"
 
 module Homebrew
   module Bundle
     module Installer
+      extend ::Utils::Output::Mixin
+
+      class InstallableEntry < T::Struct
+        const :name, String
+        const :options, Homebrew::Bundle::EntryOptions
+        const :verb, String
+        const :cls, T.class_of(Homebrew::Bundle::PackageType)
+
+        sig { returns(String) }
+        def full_name
+          T.cast(options.fetch(:full_name, name), String)
+        end
+
+        sig { returns(T.nilable(String)) }
+        def tap_name
+          ::Utils.tap_from_full_name(full_name)
+        end
+      end
+
+      sig { void }
+      def self.reset!
+        Homebrew::Bundle.reset!
+        Homebrew::Bundle::Cask.reset!
+        Homebrew::Bundle::Tap.reset!
+      end
+
       sig {
         params(
           entries:    T::Array[Dsl::Entry],
@@ -24,83 +46,63 @@ module Homebrew
           no_upgrade: T::Boolean,
           verbose:    T::Boolean,
           force:      T::Boolean,
+          jobs:       Integer,
           quiet:      T::Boolean,
         ).returns(T::Boolean)
       }
       def self.install!(entries, global: false, file: nil, no_lock: false, no_upgrade: false, verbose: false,
-                        force: false, quiet: false)
+                        force: false, jobs: 1, quiet: false)
         success = 0
         failure = 0
 
-        installable_entries = entries.filter_map do |entry|
+        installable_entries = T.let([], T::Array[InstallableEntry])
+        installable_brewfile_entries = T.let([], T::Array[Dsl::Entry])
+        entries.each do |entry|
           next if Homebrew::Bundle::Skipper.skip? entry
 
           name = entry.name
-          args = [name]
-          options = {}
-          verb = "Installing"
+          options = entry.options
           type = entry.type
-          cls = case type
-          when :brew
-            options = entry.options
-            verb = "Upgrading" if Homebrew::Bundle::FormulaInstaller.formula_upgradable?(name)
-            Homebrew::Bundle::FormulaInstaller
-          when :cask
-            options = entry.options
-            verb = "Upgrading" if Homebrew::Bundle::CaskInstaller.cask_upgradable?(name)
-            Homebrew::Bundle::CaskInstaller
-          when :mas
-            args << entry.options[:id]
-            Homebrew::Bundle::MacAppStoreInstaller
-          when :vscode
-            Homebrew::Bundle::VscodeExtensionInstaller
-          when :go
-            Homebrew::Bundle::GoInstaller
-          when :cargo
-            Homebrew::Bundle::CargoInstaller
-          when :flatpak
-            options = entry.options
-            Homebrew::Bundle::FlatpakInstaller
-          when :tap
-            verb = "Tapping"
-            options = entry.options
-            Homebrew::Bundle::TapInstaller
-          end
-          next if cls.nil?
+          cls = Homebrew::Bundle.installable(type)
+          next if cls.nil? || !cls.install_supported?
 
-          { name:, args:, options:, verb:, type:, cls: }
+          installable_brewfile_entries << entry
+          installable_entries << InstallableEntry.new(name:, options:, verb: cls.install_verb(name, options), cls:)
+        end
+
+        # Apply `trusted: true` Brewfile options before anything fetches or
+        # loads the entries: the fetch phase and upgrade checks load formulae
+        # and casks, which triggers the tap trust check before the per-entry
+        # install step could grant trust.
+        Homebrew::Bundle::Trust.entries(installable_brewfile_entries).each do |type, name|
+          Homebrew::Trust.trust!(type, name)
         end
 
         if (fetchable_names = fetchable_formulae_and_casks(installable_entries, no_upgrade:).presence)
           fetchable_names_joined = fetchable_names.join(", ")
-          Formatter.success("Fetching #{fetchable_names_joined}") unless quiet
+          puts Formatter.success("Fetching #{fetchable_names_joined}") unless quiet
           unless Bundle.brew("fetch", *fetchable_names, verbose:)
             $stderr.puts Formatter.error "`brew bundle` failed! Failed to fetch #{fetchable_names_joined}"
             return false
           end
         end
 
-        installable_entries.each do |entry|
-          name = entry.fetch(:name)
-          args = entry.fetch(:args)
-          options = entry.fetch(:options)
-          verb = entry.fetch(:verb)
-          cls = entry.fetch(:cls)
+        if jobs > 1 && installable_entries.size > 1
+          require "bundle/parallel_installer"
 
-          preinstall = if cls.preinstall!(*args, **options, no_upgrade:, verbose:)
-            puts Formatter.success("#{verb} #{name}")
-            true
-          else
-            puts "Using #{name}" unless quiet
-            false
-          end
-
-          if cls.install!(*args, **options,
-                         preinstall:, no_upgrade:, verbose:, force:)
-            success += 1
-          else
-            $stderr.puts Formatter.error("#{verb} #{name} has failed!")
-            failure += 1
+          parallel = ParallelInstaller.new(
+            installable_entries, jobs:, no_upgrade:, verbose:, force:, quiet:
+          )
+          parallel_success, parallel_failure = parallel.run!
+          success += parallel_success
+          failure += parallel_failure
+        else
+          installable_entries.each do |entry|
+            if install_entry!(entry, no_upgrade:, verbose:, force:, quiet:)
+              success += 1
+            else
+              failure += 1
+            end
           end
         end
 
@@ -122,43 +124,97 @@ module Homebrew
 
       sig {
         params(
-          entries:    T::Array[{ name:    String,
-                                 args:    T::Array[T.anything],
-                                 options: T::Hash[Symbol, T.untyped],
-                                 verb:    String,
-                                 type:    Symbol,
-                                 cls:     T::Module[T.anything] }],
+          entries:    T::Array[InstallableEntry],
           no_upgrade: T::Boolean,
         ).returns(T::Array[String])
       }
       def self.fetchable_formulae_and_casks(entries, no_upgrade:)
+        installed_taps = Tap.installed_taps
+
         entries.filter_map do |entry|
-          name = entry.fetch(:name)
-          options = entry.fetch(:options)
+          next if tap_dependencies(entry, entries:, installed_taps:).present?
 
-          case entry.fetch(:type)
-          when :brew
-            next unless tap_installed?(name)
-            next if Homebrew::Bundle::FormulaInstaller.formula_installed_and_up_to_date?(name, no_upgrade:)
-
-            name
-          when :cask
-            full_name = options.fetch(:full_name, name)
-            next unless tap_installed?(full_name)
-            next unless Homebrew::Bundle::CaskInstaller.installable_or_upgradable?(name, no_upgrade:, **options)
-
-            full_name
-          end
+          entry.cls.fetchable_name(entry.name, entry.options, no_upgrade:)
         end
       end
 
-      sig { params(package_full_name: String).returns(T::Boolean) }
-      def self.tap_installed?(package_full_name)
-        user, repository, = package_full_name.split("/", 3)
-        return true if user.blank? || repository.blank?
+      sig {
+        params(
+          entry:          InstallableEntry,
+          entries:        T::Array[InstallableEntry],
+          installed_taps: T::Array[String],
+        ).returns(T::Array[String])
+      }
+      def self.tap_dependencies(entry, entries:, installed_taps:)
+        return [] unless [Brew, Cask].include?(entry.cls)
 
-        Homebrew::Bundle::TapInstaller.installed_taps.include?("#{user}/#{repository}")
+        if (tap_name = entry.tap_name)
+          return installed_taps.exclude?(tap_name) ? [tap_name] : []
+        end
+
+        tap_names = entries.filter_map do |tap_entry|
+          tap_entry.name if tap_entry.cls == Tap && installed_taps.exclude?(tap_entry.name)
+        end
+        return [] if tap_names.empty?
+        return [] unless unavailable_without_tap?(entry)
+
+        tap_names
       end
+
+      sig { params(entry: InstallableEntry).returns(T::Boolean) }
+      def self.unavailable_without_tap?(entry)
+        require "api"
+
+        case entry.cls.name
+        when "Homebrew::Bundle::Brew"
+          !Homebrew::API.formula_name?(entry.name) &&
+            Homebrew::API.formula_aliases.exclude?(entry.name) &&
+            Homebrew::API.formula_renames.exclude?(entry.name)
+        when "Homebrew::Bundle::Cask"
+          !Homebrew::API.cask_token?(entry.name) &&
+            Homebrew::API.cask_renames.exclude?(entry.name)
+        else
+          false
+        end
+      rescue => e
+        opoo "Treating `#{entry.name}` as dependent on Brewfile taps because Homebrew could not " \
+             "check API metadata: #{e}"
+        true
+      end
+      private_class_method :unavailable_without_tap?
+
+      sig {
+        params(
+          entry:      InstallableEntry,
+          no_upgrade: T::Boolean,
+          verbose:    T::Boolean,
+          force:      T::Boolean,
+          quiet:      T::Boolean,
+        ).returns(T::Boolean)
+      }
+      def self.install_entry!(entry, no_upgrade:, verbose:, force:, quiet:)
+        name = entry.name
+        options = entry.options
+        verb = entry.verb
+        cls = entry.cls
+
+        preinstall = if cls.preinstall!(name, **options, no_upgrade:, verbose:)
+          puts Formatter.success("#{verb} #{name}")
+          true
+        else
+          puts "Using #{name}" unless quiet
+          false
+        end
+
+        if cls.install!(name, **options,
+                        preinstall:, no_upgrade:, verbose:, force:)
+          true
+        else
+          $stderr.puts Formatter.error("#{verb} #{name} has failed!")
+          false
+        end
+      end
+      private_class_method :install_entry!
     end
   end
 end

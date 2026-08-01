@@ -1,5 +1,5 @@
 ---
-last_review_date: "2025-09-05"
+last_review_date: "2026-06-19"
 ---
 
 # How to Create and Maintain a Tap
@@ -35,7 +35,31 @@ $ gh repo create $YOUR_GITHUB_USERNAME/homebrew-tap --push --public --source "$(
 ```
 
 Assuming you leave the default `.github/workflows` files in place,
-["bottles" (binary packages) will be built and uploaded to GitHub Releases](https://brew.sh/2020/11/18/homebrew-tap-with-bottles-uploaded-to-github-releases).
+["bottles" (binary packages) will be built by GitHub Actions](https://brew.sh/2020/11/18/homebrew-tap-with-bottles-uploaded-to-github-releases).
+After reviewing a pull request and checking that the pull request checks passed,
+publish the bottles immediately with `brew pr-pull`, passing the reviewed
+commit SHA. We recommend passing `--head-sha` for improved security:
+
+```console
+brew pr-pull --tap=$YOUR_GITHUB_USERNAME/tap --head-sha=0123456789abcdef0123456789abcdef01234567 123
+```
+
+You can omit `--head-sha`; `brew pr-pull` will output the pull request head
+commit SHA that it uses. This is less safe if the pull request head changes
+between your review and running `brew pr-pull`, because the command will publish
+the newer head commit instead of the commit you reviewed.
+
+```console
+brew pr-pull --tap=$YOUR_GITHUB_USERNAME/tap 123
+```
+
+You can also manually run the generated `brew pr-pull` workflow with the pull
+request number and, optionally, the reviewed commit SHA. In the tap's GitHub
+repository, open the **Actions** tab, choose the **brew pr-pull** workflow, select
+**Run workflow**, enter the pull request number and optionally the expected head
+SHA, then select **Run workflow**. If the pull request head changes before
+publishing completes when `--head-sha` or the workflow's head SHA input is used,
+`brew pr-pull` will fail rather than publishing bottles for a different commit.
 
 If you run `brew tap-new --github-packages`, you can upload to GitHub Packages instead.
 
@@ -58,6 +82,16 @@ After that, follow the [Adding Software to Homebrew](Adding-Software-to-Homebrew
 
 Finally, `git add`, `git commit` and `git push` your formula or cask to your tap and others can use it too.
 
+### Extracting a historical formula into your tap
+
+If you want to keep an older formula version in your tap, `brew extract` can copy a historical version from `homebrew/core` into it:
+
+```console
+brew extract --version=1.2.3 foo $YOUR_GITHUB_USERNAME/homebrew-tap
+```
+
+This only creates the formula file in your tap. You are then responsible for committing it, pushing it, and maintaining it, including fixing deprecations and applying security updates. If you want the simpler workflow that both extracts and installs, use `brew version-install` instead. See [Locking installed formulae at specific versions](Versions.md#locking-installed-formulae-at-specific-versions) for the tradeoffs and support boundaries of these approaches.
+
 ### Naming your formulae to avoid clashes
 
 If a formula in your tap has the same name as a Homebrew/homebrew-core formula they cannot be installed side-by-side. If you wish to create a different version of a formula that's in Homebrew/homebrew-core (e.g. with `option`s) consider giving it a different name; e.g. `nginx-full` for a more full-featured `nginx` formula. This will allow both `nginx` and `nginx-full` to be installed at the same time (assuming one is [keg-only](FAQ.md#what-does-keg-only-mean) or the linked files do not clash).
@@ -79,6 +113,8 @@ Cloning into '/opt/homebrew/Library/Taps/alice/homebrew-tap'...
 ```
 
 This is the most convenient method for users as it requires only one command.
+It also trusts only the formula being installed. See [Tap Trust](Tap-Trust.md)
+for more information.
 
 ### Manual tap installation
 
@@ -98,6 +134,16 @@ After tapping, users can install your formulae either with:
 
 - `brew install foo` if there's no core formula with the same name
 - `brew install user/repository/foo` to avoid conflicts with core formulae
+
+Non-official taps require explicit trust by default.
+Trust only the formula when whole-tap trust is unnecessary:
+
+```sh
+brew trust --formula user/repository/foo
+```
+
+Use `brew trust --tap user/repository` only when every formula, cask and external command in the tap should be trusted.
+See [Tap Trust](Tap-Trust.md) for the complete trust model.
 
 ## Maintaining a tap
 
@@ -146,5 +192,9 @@ You can provide your tap users with custom `brew` commands by adding them in a `
 Some upstream software providers like to package their software in their own Homebrew tap. When their software is [eligible for Homebrew/homebrew-core](Acceptable-Formulae.md) we prefer to maintain software there for ease of updates, improved discoverability and use of tools such as [formulae.brew.sh](https://formulae.brew.sh/).
 
 We are not willing to remove software packaged in Homebrew/homebrew-core in favour of an upstream tap. We are not willing to instruct users of our formulae to use an upstream tap instead. If upstream projects have issues with how Homebrew packages your software: please file issues (or, ideally, pull requests) to address these problems.
+
+If you're an upstream developer or representative and want more context on why Homebrew handles this differently, please also read [Working with Homebrew as an Upstream Project](Working-with-Homebrew-as-an-Upstream-Project.md).
+
+An upstream request alone is not enough of a reason to deprecate, disable or remove software. If our analytics show non-zero installs and our issue tracker is not receiving user reports that Homebrew's packaging is broken, we will generally keep the software in Homebrew/homebrew-core until there is a clearer technical, policy or project-wide reason to do otherwise.
 
 There’s an increasing desire in commercial open source about “maintaining control” e.g. defining exactly what binaries are shipping to users. Not supporting users (or even software distributions) to build-from-source is antithetical to the values of open source. If you think Homebrew's perspective is annoying on this: try and see how Debian responds to requests to ship your binaries.

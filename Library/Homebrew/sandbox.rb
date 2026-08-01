@@ -1,45 +1,401 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "erb"
+require "etc"
 require "io/console"
 require "pty"
 require "tempfile"
+require "exceptions"
 require "utils/fork"
 require "utils/output"
 
 # Helper class for running a sub-process inside of a sandboxed environment.
 class Sandbox
   include Utils::Output::Mixin
+  extend Utils::Output::Mixin
 
-  SANDBOX_EXEC = "/usr/bin/sandbox-exec"
+  # Privileged groups that are expected to be able to use a working sandbox.
+  PRIVILEGED_GROUPS = %w[admin staff root wheel].freeze
 
-  # This is defined in the macOS SDK but Ruby unfortunately does not expose it.
-  # This value can be found by compiling a C program that prints TIOCSCTTY.
-  # The value is different on Linux but that's not a problem as we only support macOS in this file.
-  TIOCSCTTY = 0x20007461
-  private_constant :TIOCSCTTY
+  class SandboxPathFilter
+    sig { returns(String) }
+    attr_reader :path
+
+    sig { returns(Symbol) }
+    attr_reader :type
+
+    sig { params(path: String, type: Symbol).void }
+    def initialize(path:, type:)
+      @path = T.let(path.freeze, String)
+      @type = type
+    end
+  end
+  private_constant :SandboxPathFilter
+
+  class SandboxRule
+    sig { returns(T::Boolean) }
+    attr_reader :allow
+
+    sig { returns(String) }
+    attr_reader :operation
+
+    sig { returns(T.nilable(SandboxPathFilter)) }
+    attr_reader :filter
+
+    sig { returns(T.nilable(String)) }
+    attr_reader :modifier
+
+    sig {
+      params(allow: T::Boolean, operation: String, filter: T.nilable(SandboxPathFilter),
+             modifier: T.nilable(String)).void
+    }
+    def initialize(allow:, operation:, filter:, modifier:)
+      @allow = allow
+      @operation = operation
+      @filter = filter
+      @modifier = modifier
+    end
+  end
+  private_constant :SandboxRule
+
+  # Configuration profile for a sandbox.
+  class SandboxProfile
+    sig { returns(T::Array[SandboxRule]) }
+    attr_reader :rules
+
+    sig { void }
+    def initialize
+      @rules = T.let([], T::Array[SandboxRule])
+    end
+
+    sig { params(rule: SandboxRule).void }
+    def add_rule(rule)
+      @rules << rule
+    end
+  end
+  private_constant :SandboxProfile
 
   sig { returns(T::Boolean) }
   def self.available?
     false
   end
 
+  sig { returns(T::Boolean) }
+  def self.full_write_isolation? = true
+
+  # Whether Homebrew is itself running inside another sandbox, which would make
+  # its own nested sandbox hang (macOS) or fail to start (Linux). Overridden
+  # per-OS.
+  sig { returns(T::Boolean) }
+  def self.nested_sandbox? = false
+
+  # Skip Homebrew's own sandbox when it is opted into via
+  # `$HOMEBREW_AVOID_NESTED_SANDBOXING` and already running inside another
+  # sandbox. The skip is only supported for an unprivileged user in a custom
+  # prefix; error out explaining why rather than silently sandboxing (and
+  # hanging) when either is not the case.
+  sig { returns(T::Boolean) }
+  def self.avoid_nested_sandboxing?
+    return false unless Homebrew::EnvConfig.avoid_nested_sandboxing?
+    return false unless nested_sandbox?
+
+    if Homebrew.default_prefix?
+      odie "Refusing to skip the sandbox: `$HOMEBREW_AVOID_NESTED_SANDBOXING` is set " \
+           "inside another sandbox but Homebrew is using its default prefix " \
+           "(#{HOMEBREW_PREFIX}); this is only supported in a custom prefix."
+    end
+
+    privileged_group = PRIVILEGED_GROUPS.find do |name|
+      group = Etc.getgrnam(name)
+      group && Process.groups.include?(group.gid)
+    rescue ArgumentError
+      false
+    end
+    if privileged_group
+      odie "Refusing to skip the sandbox: `$HOMEBREW_AVOID_NESTED_SANDBOXING` is set " \
+           "inside another sandbox but you are in the privileged `#{privileged_group}` " \
+           "group; this is only supported for an unprivileged user."
+    end
+
+    true
+  end
+
+  sig { params(install_from_tests: T::Boolean).void }
+  def self.ensure_sandbox_installed!(install_from_tests: false); end
+
+  sig { void }
+  def self.ensure_sandbox_available!
+    return if available?
+
+    raise failure_reason || "The sandbox is not available."
+  end
+
+  sig { returns(Symbol) }
+  def self.state
+    available? ? :available : :unavailable
+  end
+
+  sig { returns(T.nilable(String)) }
+  def self.failure_reason
+    return if state == :available
+
+    "The sandbox is not available."
+  end
+
+  sig { void }
+  def self.reset_state!; end
+
+  sig { returns(T::Array[String]) }
+  def self.configuration_commands = []
+
+  sig { returns(T::Array[String]) }
+  def self.configuration_command_messages = []
+
+  sig { returns(T.nilable(String)) }
+  def self.sandbox_install_command = nil
+
+  sig { void }
+  def self.configure!
+    ensure_sandbox_installed!
+    reset_state!
+  end
+
+  sig { params(command: T.any(String, Pathname), writable_path: T.any(String, Pathname), deny_network: T::Boolean).void }
+  def self.run_command(*command, writable_path:, deny_network: false)
+    ensure_sandbox_installed!
+    ensure_sandbox_available!
+
+    writable_path = Pathname(writable_path).expand_path
+    if !writable_path.directory? || !writable_path.writable?
+      raise UsageError,
+            "`#{writable_path}` is not a writable directory."
+    end
+
+    writable_path = writable_path.realpath
+    sandbox = new
+    sandbox.allow_write_temp_and_cache
+    sandbox.allow_write_path writable_path
+    sandbox.deny_read_home
+    sandbox.deny_all_network if deny_network
+    sandbox.run "/bin/sh", "-c", "cd \"$1\" && shift && exec \"$@\"", "brew-sandbox-exec", writable_path, *command
+  end
+
+  sig { returns(String) }
+  def self.executable_name
+    raise NotImplementedError, "Sandbox is not implemented for this OS."
+  end
+
+  sig { returns(::PATH) }
+  def self.executable_candidate_paths
+    executable_path = Pathname.new(executable_name)
+    return PATH.new(executable_path.dirname) if executable_path.absolute?
+
+    PATH.new(ORIGINAL_PATHS, ENV.fetch("PATH"), HOMEBREW_ORIGINAL_BREW_FILE.dirname)
+  end
+
+  sig { returns(T.nilable(Pathname)) }
+  def self.executable
+    executable_candidate_paths.each do |path|
+      begin
+        candidate = Pathname.new(File.expand_path(executable_name, path))
+      rescue ArgumentError
+        next
+      end
+
+      next if !candidate.file? || !candidate.executable?
+      next unless executable_usable?(candidate)
+
+      return candidate
+    end
+
+    nil
+  end
+
+  sig { returns(Pathname) }
+  def self.executable!
+    executable || raise("#{executable_name} is required to use the sandbox.")
+  end
+
+  sig { params(_candidate: Pathname).returns(T::Boolean) }
+  def self.executable_usable?(_candidate)
+    true
+  end
+
+  sig { returns(Integer) }
+  def self.terminal_ioctl_request
+    raise NotImplementedError, "Sandbox is not implemented for this OS."
+  end
+
   sig { void }
   def initialize
     @profile = T.let(SandboxProfile.new, SandboxProfile)
     @failed = T.let(false, T::Boolean)
+    @logfile = T.let(nil, T.nilable(T.any(String, Pathname)))
+    @start = T.let(nil, T.nilable(Time))
   end
 
   sig { params(file: T.any(String, Pathname)).void }
   def record_log(file)
-    @logfile = T.let(file, T.nilable(T.any(String, Pathname)))
+    @logfile = file
   end
 
-  sig { params(allow: T::Boolean, operation: String, filter: T.nilable(String), modifier: T.nilable(String)).void }
+  sig {
+    params(allow: T::Boolean, operation: String, filter: T.nilable(SandboxPathFilter),
+           modifier: T.nilable(String)).void
+  }
   def add_rule(allow:, operation:, filter: nil, modifier: nil)
     rule = SandboxRule.new(allow:, operation:, filter:, modifier:)
     @profile.add_rule(rule)
+  end
+
+  sig { params(path: T.any(String, Pathname), type: Symbol).void }
+  def allow_read(path:, type: :literal)
+    add_rule allow: true, operation: "file-read*", filter: path_filter(path, type)
+  end
+
+  sig { params(path: T.any(String, Pathname), type: Symbol).void }
+  def deny_read(path:, type: :literal)
+    add_rule allow: false, operation: "file-read*", filter: path_filter(path, type)
+  end
+
+  sig { params(path: T.any(String, Pathname)).void }
+  def deny_read_path(path)
+    deny_read path:, type: :subpath
+  end
+
+  sig { void }
+  def deny_read_home
+    require "trust"
+
+    home = Pathname(Dir.home(ENV.fetch("USER"))).realpath
+    readable_paths = [
+      HOMEBREW_PREFIX,
+      HOMEBREW_REPOSITORY,
+      HOMEBREW_CACHE,
+      HOMEBREW_LOGS,
+      HOMEBREW_TEMP,
+      ENV.fetch("GITHUB_WORKSPACE", nil),
+      ENV.fetch("RUNNER_WORKSPACE", nil),
+      ENV.fetch("RUNNER_TEMP", nil),
+      Homebrew::Trust.trust_file,
+      *home_write_paths.select { |path| File.exist?(path) },
+    ].compact.flat_map do |path|
+      path = Pathname(path)
+      [path.expand_path, (path.realpath if path.exist?)].compact
+    end
+    if readable_paths.any? { |path| path.ascend.include?(home) }
+      # When Homebrew or CI needs some `$HOME` paths to stay readable, deny only
+      # well-known credential and personal-data paths instead of enumerating all
+      # of `$HOME`.
+      [
+        ".ssh",
+        ".aws",
+        ".azure",
+        ".boto",
+        ".docker",
+        ".config/fish",
+        ".config/gh",
+        ".config/gcloud",
+        ".config/huggingface",
+        ".config/pip",
+        ".config/pypoetry",
+        ".config/rclone",
+        ".config/containers/auth.json",
+        ".config/composer/auth.json",
+        ".config/sops/age/keys.txt",
+        ".gnupg",
+        ".git-credentials",
+        ".gitconfig",
+        ".gsutil",
+        ".kube",
+        ".netrc",
+        ".npmrc",
+        ".yarnrc",
+        ".yarnrc.yml",
+        ".pnpmrc",
+        ".bunfig.toml",
+        ".pypirc",
+        ".pip",
+        ".poetry",
+        ".local/share/pypoetry",
+        ".gem/credentials",
+        ".bundle/config",
+        ".cargo/credentials",
+        ".cargo/credentials.toml",
+        ".composer/auth.json",
+        ".condarc",
+        ".m2/settings.xml",
+        ".gradle/gradle.properties",
+        ".sbt/1.0/credentials.sbt",
+        ".terraform.d/credentials.tfrc.json",
+        ".pulumi/credentials.json",
+        ".oci/config",
+        ".huggingface/token",
+        ".cache/huggingface/token",
+        ".claude",
+        ".claude.json",
+        ".kiro",
+        ".bash_login",
+        ".bash_logout",
+        ".bash_profile",
+        ".bashrc",
+        ".bash_history",
+        ".profile",
+        ".zlogin",
+        ".zlogout",
+        ".zprofile",
+        ".zshenv",
+        ".zshrc",
+        ".zsh_history",
+        ".python_history",
+        ".mysql_history",
+        ".psql_history",
+        ".env",
+        ".env.local",
+        "Documents",
+        "Movies",
+        "Music",
+        "Pictures",
+        "Library/Keychains",
+        "Library/Mobile Documents",
+        "Library/CloudStorage",
+        "Dropbox",
+        "Google Drive",
+        "OneDrive",
+      ].each do |path|
+        path = home/path
+        next unless path.exist?
+
+        path = path.realpath
+        next unless path.ascend.include?(home)
+
+        if (readable_path = readable_paths.find { |required_path| required_path.ascend.include?(path) })
+          opoo <<~EOS
+            The sandbox cannot prevent formulae from reading:
+              #{path}
+            because this required path is inside it:
+              #{readable_path}
+            Formulae may access personal data in this directory.
+          EOS
+          next
+        end
+
+        deny_read_path path
+      rescue Errno::ENOENT
+        nil
+      end
+      return
+    end
+
+    deny_read_path home
+  end
+
+  sig { params(path: T.nilable(T.any(String, Pathname)), type: Symbol).void }
+  def allow_read_if_exists(path:, type: :literal)
+    return unless path
+    return unless File.exist?(path)
+
+    allow_read path:, type:
   end
 
   sig { params(path: T.any(String, Pathname), type: Symbol).void }
@@ -59,6 +415,14 @@ class Sandbox
     allow_write path:, type: :subpath
   end
 
+  sig { params(path: T.nilable(T.any(String, Pathname))).void }
+  def allow_write_path_if_exists(path)
+    return unless path
+    return unless File.exist?(path)
+
+    allow_write_path path
+  end
+
   sig { params(path: T.any(String, Pathname)).void }
   def deny_write_path(path)
     deny_write path:, type: :subpath
@@ -66,9 +430,6 @@ class Sandbox
 
   sig { void }
   def allow_write_temp_and_cache
-    allow_write_path "/private/tmp"
-    allow_write_path "/private/var/tmp"
-    allow_write path: "^/private/var/folders/[^/]+/[^/]+/[C,T]/", type: :regex
     allow_write_path HOMEBREW_TEMP
     allow_write_path HOMEBREW_CACHE
   end
@@ -91,12 +452,8 @@ class Sandbox
     allow_write_path formula.var
   end
 
-  # Xcode projects expect access to certain cache/archive dirs.
   sig { void }
-  def allow_write_xcode
-    allow_write_path "#{Dir.home(ENV.fetch("USER"))}/Library/Developer"
-    allow_write_path "#{Dir.home(ENV.fetch("USER"))}/Library/Caches/org.swift.swiftpm"
-  end
+  def allow_write_xcode; end
 
   sig { params(formula: Formula).void }
   def allow_write_log(formula)
@@ -119,16 +476,6 @@ class Sandbox
     add_rule allow: true, operation: "network*", filter: path_filter(path, type)
   end
 
-  sig { params(path: T.any(String, Pathname), type: Symbol).void }
-  def deny_network(path:, type: :literal)
-    add_rule allow: false, operation: "network*", filter: path_filter(path, type)
-  end
-
-  sig { void }
-  def allow_all_network
-    add_rule allow: true, operation: "network*"
-  end
-
   sig { void }
   def deny_all_network
     add_rule allow: false, operation: "network*"
@@ -137,15 +484,11 @@ class Sandbox
   sig { params(args: T.any(String, Pathname)).void }
   def run(*args)
     Dir.mktmpdir("homebrew-sandbox", HOMEBREW_TEMP) do |tmpdir|
-      allow_network path: File.join(tmpdir, "socket"), type: :literal # Make sure we have access to the error pipe.
-
-      seatbelt = File.new(File.join(tmpdir, "homebrew.sb"), "wx")
-      seatbelt.write(@profile.dump)
-      seatbelt.close
+      allow_network path: File.join(tmpdir, "socket"), type: :literal if allow_network_for_error_pipe?
       @start = T.let(Time.now, T.nilable(Time))
 
       begin
-        command = [SANDBOX_EXEC, "-f", seatbelt.path, *args]
+        command = sandbox_command(args, tmpdir)
         # Start sandbox in a pseudoterminal to prevent access of the parent terminal.
         PTY.open do |controller, worker|
           # Set the PTY's window size to match the parent terminal.
@@ -176,7 +519,7 @@ class Sandbox
             end
 
             stdout_thread = Thread.new do
-              controller.each_char { |c| print(c) }
+              copy_pty_output(controller)
             end
 
             Utils.safe_fork(directory: tmpdir, yield_parent: true) do |error_pipe|
@@ -184,9 +527,17 @@ class Sandbox
                 # Child side
                 Process.setsid
                 controller.close
-                worker.ioctl(TIOCSCTTY, 0) # Make this the controlling terminal.
-                File.open("/dev/tty", Fcntl::O_WRONLY).close # Workaround for https://developer.apple.com/forums/thread/663632
+                worker.ioctl(self.class.terminal_ioctl_request, 0) # Make this the controlling terminal.
+
+                ensure_child_tty_available
+
+                # Move into a non-denied directory before `exec` so subsequent
+                # `getcwd(3)` calls (which walk every parent) never cross a
+                # `deny_read_home` path inherited from the caller's CWD.
+                Dir.chdir(tmpdir)
+
                 worker.close_on_exec = true
+                apply_sandbox
                 exec(*command, in: worker, out: worker, err: worker) # And map everything to the PTY.
               else
                 # Parent side
@@ -222,56 +573,73 @@ class Sandbox
         @failed = true
         raise
       ensure
-        sleep 0.1 # wait for a bit to let syslog catch up the latest events.
-        syslog_args = [
-          "-F", "$((Time)(local)) $(Sender)[$(PID)]: $(Message)",
-          "-k", "Time", "ge", @start.to_i.to_s,
-          "-k", "Message", "S", "deny",
-          "-k", "Sender", "kernel",
-          "-o",
-          "-k", "Time", "ge", @start.to_i.to_s,
-          "-k", "Message", "S", "deny",
-          "-k", "Sender", "sandboxd"
-        ]
-        logs = Utils.popen_read("syslog", *syslog_args)
-
-        # These messages are confusing and non-fatal, so don't report them.
-        logs = logs.lines.grep_v(/^.*Python\(\d+\) deny file-write.*pyc$/).join
-
-        unless logs.empty?
-          if @logfile
-            File.open(@logfile, "w") do |log|
-              log.write logs
-              log.write "\nWe use time to filter sandbox log. Therefore, unrelated logs may be recorded.\n"
-            end
-          end
-
-          if @failed && Homebrew::EnvConfig.verbose?
-            ohai "Sandbox Log", logs
-            $stdout.flush # without it, brew test-bot would fail to catch the log
-          end
-        end
+        record_sandbox_log
       end
     end
   end
 
   # @api private
-  sig { params(path: T.any(String, Pathname), type: Symbol).returns(String) }
+  sig { params(path: T.any(String, Pathname), type: Symbol).returns(SandboxPathFilter) }
   def path_filter(path, type)
-    invalid_char = ['"', "'", "(", ")", "\n", "\\"].find do |c|
-      path.to_s.include?(c)
-    end
-    raise ArgumentError, "Invalid character '#{invalid_char}' in path: #{path}" if invalid_char
-
-    case type
-    when :regex   then "regex #\"#{path}\""
-    when :subpath then "subpath \"#{expand_realpath(Pathname.new(path))}\""
-    when :literal then "literal \"#{expand_realpath(Pathname.new(path))}\""
+    # Any character is allowed: the OS-specific renderer quotes paths safely
+    # (the seatbelt renderer escapes the `"` and `\` string delimiters; the
+    # Linux sandbox passes each path as a separate argument), so even paths
+    # with spaces, parentheses, quotes, backslashes or newlines are expressible.
+    filter_path = case type
+    when :regex   then path.to_s
+    when :subpath, :literal
+      expand_realpath(Pathname.new(path)).to_s
     else raise ArgumentError, "Invalid path filter type: #{type}"
     end
+
+    SandboxPathFilter.new(path: filter_path, type:)
+  end
+
+  sig { returns(SandboxProfile) }
+  attr_reader :profile
+
+  sig { params(controller: IO).void }
+  def copy_pty_output(controller)
+    controller.each_char { |c| print(c) }
+  rescue Errno::EIO
+    # Linux marks a PTY as an I/O error when its peer closes, so treat this as EOF:
+    # https://github.com/torvalds/linux/blob/master/drivers/tty/pty.c
   end
 
   private
+
+  sig { returns(T::Boolean) }
+  attr_reader :failed
+
+  sig { returns(T.nilable(T.any(String, Pathname))) }
+  attr_reader :logfile
+
+  sig { returns(T.nilable(Time)) }
+  attr_reader :start
+
+  # Home directories a build needs to write to, and so must also read;
+  # overridden per-OS (e.g. the Xcode directories on macOS).
+  sig { returns(T::Array[String]) }
+  def home_write_paths = []
+
+  sig { params(_args: T::Array[T.any(String, Pathname)], _tmpdir: String).returns(T::Array[T.any(String, Pathname)]) }
+  def sandbox_command(_args, _tmpdir)
+    raise NotImplementedError, "Sandbox is not implemented for this OS."
+  end
+
+  sig { returns(T::Boolean) }
+  def allow_network_for_error_pipe?
+    false
+  end
+
+  sig { void }
+  def ensure_child_tty_available; end
+
+  sig { void }
+  def apply_sandbox; end
+
+  sig { void }
+  def record_sandbox_log; end
 
   sig { params(path: Pathname).returns(Pathname) }
   def expand_realpath(path)
@@ -279,80 +647,6 @@ class Sandbox
 
     path.exist? ? path.realpath : expand_realpath(path.parent)/path.basename
   end
-
-  class SandboxRule
-    sig { returns(T::Boolean) }
-    attr_reader :allow
-
-    sig { returns(String) }
-    attr_reader :operation
-
-    sig { returns(T.nilable(String)) }
-    attr_reader :filter
-
-    sig { returns(T.nilable(String)) }
-    attr_reader :modifier
-
-    sig { params(allow: T::Boolean, operation: String, filter: T.nilable(String), modifier: T.nilable(String)).void }
-    def initialize(allow:, operation:, filter:, modifier:)
-      @allow = allow
-      @operation = operation
-      @filter = filter
-      @modifier = modifier
-    end
-  end
-  private_constant :SandboxRule
-
-  # Configuration profile for a sandbox.
-  class SandboxProfile
-    SEATBELT_ERB = <<~ERB
-      (version 1)
-      (debug deny) ; log all denied operations to /var/log/system.log
-      <%= rules.join("\n") %>
-      (allow file-write*
-          (literal "/dev/ptmx")
-          (literal "/dev/dtracehelper")
-          (literal "/dev/null")
-          (literal "/dev/random")
-          (literal "/dev/zero")
-          (regex #"^/dev/fd/[0-9]+$")
-          (regex #"^/dev/tty[a-z0-9]*$")
-          )
-      (deny file-write*) ; deny non-allowlist file write operations
-      (deny file-write-setugid) ; deny non-allowlist file write SUID/SGID operations
-      (deny file-write-mode) ; deny non-allowlist file write mode operations
-      (allow process-exec
-          (literal "/bin/ps")
-          (with no-sandbox)
-          ) ; allow certain processes running without sandbox
-      (allow default) ; allow everything else
-    ERB
-
-    sig { returns(T::Array[String]) }
-    attr_reader :rules
-
-    sig { void }
-    def initialize
-      @rules = T.let([], T::Array[String])
-    end
-
-    sig { params(rule: SandboxRule).void }
-    def add_rule(rule)
-      s = +"("
-      s << (rule.allow ? "allow" : "deny")
-      s << " #{rule.operation}"
-      s << " (#{rule.filter})" if rule.filter
-      s << " (with #{rule.modifier})" if rule.modifier
-      s << ")"
-      @rules << s.freeze
-    end
-
-    sig { returns(String) }
-    def dump
-      ERB.new(SEATBELT_ERB).result(binding)
-    end
-  end
-  private_constant :SandboxProfile
 end
 
 require "extend/os/sandbox"

@@ -1,15 +1,29 @@
+# typed: true
 # frozen_string_literal: true
 
 require "extend/pathname"
 require "install_renamed"
 
 RSpec.describe Pathname do
-  include FileUtils
-
   let(:src) { mktmpdir }
   let(:dst) { mktmpdir }
   let(:file) { src/"foo" }
   let(:dir) { src/"bar" }
+
+  include FileUtils
+
+  describe EagerInitializeExtension do
+    it "defines the lazy memoised ivars on every new Pathname" do
+      pathname = Pathname.new(file.to_s)
+      [:@magic_number, :@file_type, :@zipinfo, :@which_install_info, :@disk_usage, :@file_count].each do |ivar|
+        expect(pathname.instance_variable_defined?(ivar)).to be(true), "expected #{ivar} to be defined"
+        # Read the raw ivars: the names are dynamic and eager raw definition is under test.
+        # rubocop:disable Homebrew/NoInstanceVariableAccessInTests
+        expect(pathname.instance_variable_get(ivar)).to be_nil
+        # rubocop:enable Homebrew/NoInstanceVariableAccessInTests
+      end
+    end
+  end
 
   describe DiskUsageExtension do
     before do
@@ -121,18 +135,12 @@ RSpec.describe Pathname do
   end
 
   describe "#extname" do
-    it "supports common multi-level archives" do
+    specify do
       expect(described_class.new("foo-0.1.tar.gz").extname).to eq(".tar.gz")
       expect(described_class.new("foo-0.1.cpio.gz").extname).to eq(".cpio.gz")
-    end
-
-    it "does not treat version numbers as extensions" do # rubocop:todo RSpec/AggregateExamples
       expect(described_class.new("foo-0.1").extname).to eq("")
       expect(described_class.new("foo-1.0-rc1").extname).to eq("")
       expect(described_class.new("foo-1.2.3").extname).to eq ""
-    end
-
-    it "supports `.7z` with version numbers" do # rubocop:todo RSpec/AggregateExamples
       expect(described_class.new("snap7-full-1.4.2.7z").extname).to eq ".7z"
     end
   end

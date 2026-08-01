@@ -11,6 +11,8 @@ module Utils
   module Curl
     include SystemCommand::Mixin
     extend SystemCommand::Mixin
+    include Utils::Output::Mixin
+    extend Utils::Output::Mixin
     extend T::Helpers
 
     requires_ancestor { Kernel }
@@ -40,11 +42,18 @@ module Utils
     # the status code and any following descriptive text (e.g. `Not Found`).
     HTTP_STATUS_LINE_REGEX = %r{^HTTP/.* (?<code>\d+)(?: (?<text>[^\r\n]+))?}
 
+    HTTPS_REDIRECT_CURL_ARGS = ["--proto-redir", "=https"].freeze
+
+    # A `--progress-bar` percentage (e.g. "50.0%"); may belong to an earlier,
+    # unrelated request, so it's stripped rather than kept.
+    PROGRESS_BAR_REGEX = /\A#*\s*\d{1,3}\.\d%\s*/
+
     private_constant :CURL_WEIRD_SERVER_REPLY_EXIT_CODE,
                      :CURL_HTTP_RETURNED_ERROR_EXIT_CODE,
                      :CURL_RECV_ERROR_EXIT_CODE,
                      :ETAG_VALUE_REGEX, :HTTP_RESPONSE_BODY_SEPARATOR,
-                     :HTTP_STATUS_LINE_REGEX
+                     :HTTP_STATUS_LINE_REGEX,
+                     :HTTPS_REDIRECT_CURL_ARGS, :PROGRESS_BAR_REGEX
 
     module_function
 
@@ -58,9 +67,11 @@ module Utils
     sig { returns(String) }
     def curl_path
       @curl_path ||= T.let(
-        Utils.popen_read(curl_executable, "--homebrew=print-path").chomp.presence,
+        Utils.popen_read(curl_executable, "--homebrew=print-path").chomp,
         T.nilable(String),
       )
+      odie("Failed to get curl path") if @curl_path.blank?
+      @curl_path
     end
 
     sig { void }
@@ -162,6 +173,39 @@ module Utils
       (args + extra_args).map(&:to_s)
     end
 
+    sig { params(url: String, resolved_url: String).returns(T::Boolean) }
+    def insecure_redirect?(url:, resolved_url:)
+      Homebrew::EnvConfig.no_insecure_redirect? &&
+        url.start_with?("https://") && !resolved_url.start_with?("https://")
+    end
+
+    sig { returns(T::Array[String]) }
+    def https_redirect_curl_args
+      HTTPS_REDIRECT_CURL_ARGS
+    end
+
+    sig { params(args: T::Array[String]).returns(T::Array[String]) }
+    def no_insecure_redirect_curl_args(args)
+      return args unless Homebrew::EnvConfig.no_insecure_redirect?
+
+      # `--proto-redir =https` tells `curl --location` to reject any redirect
+      # target that is not HTTPS. Drop caller-provided values first so they
+      # cannot relax the HTTPS-only redirect policy.
+      args = args.each_with_index.filter_map do |arg, i|
+        next if arg == "--proto-redir"
+        next if i.positive? && args.fetch(i - 1) == "--proto-redir"
+        next if arg.start_with?("--proto-redir=")
+
+        arg
+      end
+      return args unless args.include?("--location")
+
+      # This blocks an HTTPS request from following a redirect to HTTP at the
+      # curl layer, including cases where a preflight request saw a different
+      # redirect chain than the real download.
+      [*https_redirect_curl_args, *args]
+    end
+
     sig {
       params(
         args:              String,
@@ -181,6 +225,7 @@ module Utils
       secrets: [], print_stdout: false, print_stderr: false, debug: nil,
       verbose: nil, env: {}, timeout: nil, use_homebrew_curl: false, **options
     )
+      args = no_insecure_redirect_curl_args(args)
       end_time = Time.now + timeout if timeout
 
       command_options = {
@@ -278,6 +323,12 @@ module Utils
       args = ["--remote-time", "--output", destination.to_s, *args]
 
       curl(*args, **options)
+    end
+
+    # Run after `Tty.collapse_carriage_returns`; a bar-only line becomes empty.
+    sig { params(string: String).returns(String) }
+    def strip_progress_bar(string)
+      string.split("\n", -1).map { |line| line.sub(PROGRESS_BAR_REGEX, "") }.join("\n")
     end
 
     sig { overridable.params(args: String, options: T.untyped).returns(SystemCommand::Result) }
@@ -457,8 +508,7 @@ module Utils
         end
       end
 
-      if url.start_with?("https://") && Homebrew::EnvConfig.no_insecure_redirect? &&
-         details[:final_url].present? && !details[:final_url].start_with?("https://")
+      if details[:final_url].present? && insecure_redirect?(url:, resolved_url: details[:final_url])
         return "The #{url_type} #{url} redirects back to HTTP"
       end
 
@@ -523,7 +573,7 @@ module Utils
       file = Tempfile.new.tap(&:close)
 
       # Convert specs to options. This is mostly key-value options,
-      # unless the value is a boolean in which case treat as as flag.
+      # unless the value is a boolean in which case treat as a flag.
       specs = specs.flat_map do |option, argument|
         next [] if argument == false # No flag.
 
@@ -556,27 +606,34 @@ module Utils
       etag = headers["etag"][ETAG_VALUE_REGEX, 1] if headers["etag"].present?
       content_length = headers["content-length"]
 
-      if status.success?
-        open_args = {}
-        content_type = headers["content-type"]
+      if status.success? && (file_path = file.path)
+        file_hash = Digest::SHA256.file(file_path).hexdigest if hash_needed
 
-        # Use the last `Content-Type` header if there is more than one instance
-        # in the response
-        content_type = content_type.last if content_type.is_a?(Array)
+        # Only load file contents for text-based content comparison on small files.
+        # Large binary files don't benefit from content comparison.
+        max_read_size = 100 * 1024 * 1024
+        if File.size(file_path) <= max_read_size
+          open_args = {}
+          content_type = headers["content-type"]
 
-        # Try to get encoding from Content-Type header
-        # TODO: add guessing encoding by <meta http-equiv="Content-Type" ...> tag
-        if content_type &&
-           (match = content_type.match(/;\s*charset\s*=\s*([^\s]+)/)) &&
-           (charset = match[1])
-          begin
-            open_args[:encoding] = Encoding.find(charset)
-          rescue ArgumentError
-            # Unknown charset in Content-Type header
+          # Use the last `Content-Type` header if there is more than one instance
+          # in the response
+          content_type = content_type.last if content_type.is_a?(Array)
+
+          # Try to get encoding from Content-Type header
+          # TODO: add guessing encoding by <meta http-equiv="Content-Type" ...> tag
+          if content_type &&
+             (match = content_type.match(/;\s*charset\s*=\s*([^\s]+)/)) &&
+             (charset = match[1])
+            begin
+              open_args[:encoding] = Encoding.find(charset)
+            rescue ArgumentError
+              # Unknown charset in Content-Type header
+            end
           end
+
+          file_contents = File.read(file_path, **open_args)
         end
-        file_contents = File.read(T.must(file.path), **open_args)
-        file_hash = Digest::SHA256.hexdigest(file_contents) if hash_needed
       end
 
       {
@@ -598,7 +655,13 @@ module Utils
     sig { returns(Version) }
     def curl_version
       @curl_version ||= T.let({}, T.nilable(T::Hash[String, Version]))
-      @curl_version[curl_path] ||= Version.new(T.must(curl_output("-V").stdout[/curl (\d+(\.\d+)+)/, 1]))
+      curl_v_stdout = curl_output("-V").stdout
+      version = curl_v_stdout[/curl (\d+(?:\.\d+)+)/, 1]
+      if version
+        @curl_version[curl_path] ||= Version.new(version)
+      else
+        odie("Failed to parse curl version from #{curl_v_stdout}")
+      end
     end
 
     sig { returns(T::Boolean) }

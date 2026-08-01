@@ -1,16 +1,20 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "cachable"
 require "keg_relocate"
 require "language/python"
 require "lock_file"
-require "cachable"
+require "pkg_version"
 require "utils/output"
 
 # Installation prefix of a formula.
 class Keg
+  extend T::Generic
   extend Cachable
   include Utils::Output::Mixin
+
+  Cache = type_template { { fixed: T::Hash[Symbol, T.untyped] } }
 
   # Error for when a keg is already linked.
   class AlreadyLinkedError < RuntimeError
@@ -90,13 +94,14 @@ class Keg
   # These paths relative to the keg's share directory should always be real
   # directories in the prefix, never symlinks.
   SHARE_PATHS = %w[
-    aclocal doc info java locale man
+    aclocal cps doc info java locale man
     man/man1 man/man2 man/man3 man/man4
     man/man5 man/man6 man/man7 man/man8
     man/cat1 man/cat2 man/cat3 man/cat4
     man/cat5 man/cat6 man/cat7 man/cat8
     applications gnome gnome/help icons
-    mime-info pixmaps sounds postgresql
+    mime mime/packages mime-info pixmaps
+    postgresql sounds
   ].freeze
 
   ELISP_EXTENSIONS = %w[.el .elc].freeze
@@ -163,11 +168,11 @@ class Keg
   sig { returns(T::Array[Pathname]) }
   def self.must_be_writable_directories
     @must_be_writable_directories ||= T.let((%w[
-      etc/bash_completion.d lib/pkgconfig
+      etc/bash_completion.d lib/cps lib/pkgconfig
       share/aclocal share/doc share/info share/locale share/man
       share/man/man1 share/man/man2 share/man/man3 share/man/man4
       share/man/man5 share/man/man6 share/man/man7 share/man/man8
-      share/zsh share/zsh/site-functions
+      share/cps share/zsh share/zsh/site-functions
       share/pwsh share/pwsh/completions
       var/log
     ].map { |dir| HOMEBREW_PREFIX/dir } + must_exist_subdirectories + [
@@ -205,7 +210,7 @@ class Keg
     @linked_keg_record = T.let(HOMEBREW_LINKED_KEGS/name, Pathname)
     @opt_record = T.let(HOMEBREW_PREFIX/"opt/#{name}", Pathname)
     @oldname_opt_records = T.let([], T::Array[Pathname])
-    @require_relocation = false
+    @require_relocation = T.let(false, T::Boolean)
   end
 
   sig { returns(Pathname) }
@@ -251,6 +256,11 @@ class Keg
 
   sig { returns(T::Boolean) }
   def require_relocation? = @require_relocation
+
+  sig { void }
+  def require_relocation!
+    @require_relocation = true
+  end
 
   sig { returns(T::Boolean) }
   def linked?
@@ -315,7 +325,9 @@ class Keg
     CacheStoreDatabase.use(:linkage) do |db|
       break unless db.created?
 
-      LinkageCacheStore.new(path, db).delete!
+      LinkageCacheStore.new(path.to_s,
+                            T.cast(db,
+                                   CacheStoreDatabase[String, T::Hash[T.any(String, Symbol), T.anything]])).delete!
     end
 
     FileUtils.rm_r(path)
@@ -346,8 +358,8 @@ class Keg
 
     dirs = []
 
-    keg_directories = self.class.keg_link_directories.map { |d| path/d }
-                          .select(&:exist?)
+    keg_directories = self.class.keg_link_directories.map { |d| path/d }.select(&:exist?)
+
     keg_directories.each do |dir|
       dir.find do |src|
         dst = HOMEBREW_PREFIX + src.relative_path_from(path)
@@ -442,7 +454,6 @@ class Keg
 
   sig { returns(PkgVersion) }
   def version
-    require "pkg_version"
     PkgVersion.parse(path.basename.to_s)
   end
 
@@ -523,7 +534,8 @@ class Keg
       case relative_path.to_s
       when "charset.alias"
         :skip_file
-      when "pkgconfig", # pkg-config database gets explicitly created
+      when "cps",       # Common Package Specification database gets explicitly created
+           "pkgconfig", # pkg-config database gets explicitly created
            "cmake",     # cmake database gets explicitly created
            "dtrace",    # lib/language folders also get explicitly created
            /^gdk-pixbuf/,

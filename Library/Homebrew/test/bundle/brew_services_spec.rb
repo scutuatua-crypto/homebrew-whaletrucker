@@ -1,21 +1,61 @@
+# typed: false
 # frozen_string_literal: true
 
 require "bundle"
 require "bundle/brew_services"
 
-RSpec.describe Homebrew::Bundle::BrewServices do
+RSpec.describe Homebrew::Bundle::Brew::Services do
   describe ".started_services" do
     before do
       described_class.reset!
     end
 
-    it "returns started services" do
-      allow(Utils).to receive(:safe_popen_read).and_return <<~EOS
-        nginx  started  homebrew.mxcl.nginx.plist
-        apache stopped  homebrew.mxcl.apache.plist
-        mysql  started  homebrew.mxcl.mysql.plist
-      EOS
+    it "returns started services", :needs_daemon_manager do
+      allow(Utils).to receive(:safe_popen_read).and_return <<~JSON
+        [
+          {
+            "name": "nginx",
+            "status": "started"
+          },
+          {
+            "name": "apache",
+            "status": "stopped"
+          },
+          {
+            "name": "mysql",
+            "status": "started"
+          }
+        ]
+      JSON
       expect(described_class.started_services).to contain_exactly("nginx", "mysql")
+    end
+
+    it "returns empty array when no services exist", :needs_daemon_manager do
+      allow(Utils).to receive(:safe_popen_read).and_return("[]\n")
+      expect(described_class.started_services).to eq([])
+    end
+
+    it "returns the missing daemon manager fallback when no daemon manager is available" do
+      allow(Homebrew::Services::System).to receive_messages(launchctl?: false, systemctl?: false)
+      allow(described_class).to receive(:started_services_without_daemon_manager).and_return([])
+
+      expect(described_class.started_services).to eq([])
+    end
+
+    it "exits with error on macOS when no daemon manager is available", :needs_macos do
+      allow(Homebrew::Services::System).to receive_messages(launchctl?: false, systemctl?: false)
+      expect do
+        described_class.started_services
+      end.to raise_error(SystemExit)
+        .and output(/supported only on macOS or Linux/).to_stderr
+    end
+  end
+
+  describe ".started_services_without_daemon_manager" do
+    it "warns and returns an empty array on Linux", :needs_linux do
+      expect do
+        expect(described_class.started_services_without_daemon_manager).to eq([])
+      end.to output(/Skipping `brew services list` due to missing systemctl/).to_stderr
     end
   end
 
@@ -60,6 +100,34 @@ RSpec.describe Homebrew::Bundle::BrewServices do
                                                         verbose: false).and_return(true)
       expect(described_class.restart("nginx")).to be(true)
       expect(described_class.started_services).to include("nginx")
+    end
+  end
+
+  describe "#installed_and_up_to_date?" do
+    subject(:services) { described_class.new }
+
+    before do
+      described_class.reset!
+      allow(described_class).to receive(:started_services).and_return(%w[mailhog])
+      allow(services).to receive(:formula_needs_to_start?).and_return(true)
+      allow(Homebrew::Bundle::Brew).to receive(:formula_oldnames).and_return({})
+    end
+
+    it "matches a tap-qualified formula by base name" do
+      entry = instance_double(Homebrew::Bundle::Dsl::Entry, name:    "some-tap/tap/mailhog",
+                                                            options: { restart_service: true })
+      expect(services.installed_and_up_to_date?(entry)).to be(true)
+    end
+
+    it "matches a non-tap-qualified formula by name" do
+      entry = instance_double(Homebrew::Bundle::Dsl::Entry, name: "mailhog", options: { restart_service: true })
+      expect(services.installed_and_up_to_date?(entry)).to be(true)
+    end
+
+    it "returns false when service is not started" do
+      entry = instance_double(Homebrew::Bundle::Dsl::Entry, name:    "some-tap/tap/nginx",
+                                                            options: { restart_service: true })
+      expect(services.installed_and_up_to_date?(entry)).to be(false)
     end
   end
 

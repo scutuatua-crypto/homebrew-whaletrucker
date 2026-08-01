@@ -15,9 +15,12 @@ module Homebrew
   class McpServer
     HOMEBREW_BREW_FILE = T.let(ENV.fetch("HOMEBREW_BREW_FILE").freeze, String)
     HOMEBREW_VERSION = T.let(ENV.fetch("HOMEBREW_VERSION").freeze, String)
-    JSON_RPC_VERSION = T.let("2.0", String)
-    MCP_PROTOCOL_VERSION = T.let("2025-03-26", String)
-    ERROR_CODE = T.let(-32601, Integer)
+    JSON_RPC_VERSION = "2.0"
+    MCP_PROTOCOL_VERSION = "2025-03-26"
+    ERROR_CODE = -32601
+
+    # Reject inline `cask ... do`/`cask(...) {}` blocks the cask loader would eval as Ruby.
+    INLINE_CASK_DSL_REGEX = /\A\s*cask\s*['"(]/
 
     SERVER_INFO = T.let({
       name:    "brew-mcp-server",
@@ -72,9 +75,9 @@ module Homebrew
       },
       upgrade:   {
         name:        "upgrade",
-        description: "Upgrade outdated casks and outdated, unpinned formulae using the same options they were " \
-                     "originally installed with, plus any appended brew formula options. If <cask> or <formula> " \
-                     "are specified, upgrade only the given <cask> or <formula> kegs (unless they are pinned).",
+        description: "Upgrade outdated, unpinned packages using the same options they were originally " \
+                     "installed with, plus any appended brew formula options. If <cask> or <formula> " \
+                     "are specified, upgrade only the given <cask> or <formula> (unless they are pinned).",
         command:     "brew upgrade",
         inputSchema: { type: "object", properties: FORMULA_OR_CASK_PROPERTIES },
       },
@@ -147,7 +150,7 @@ module Homebrew
           properties: {
             only:      {
               type:        "string",
-              description: "Specific tests to run (comma-seperated) e.g. for `<file>_spec.rb` pass `<file>`. " \
+              description: "Specific tests to run (comma-separated) e.g. for `<file>_spec.rb` pass `<file>`. " \
                            "Appending `:<line_number>` will start at a specific line",
             },
             fail_fast: {
@@ -191,9 +194,9 @@ module Homebrew
     def initialize(stdin: $stdin, stdout: $stdout, stderr: $stderr)
       @debug_logging = T.let(ARGV.include?("--debug") || ARGV.include?("-d"), T::Boolean)
       @ping_switch = T.let(ARGV.include?("--ping"), T::Boolean)
-      @stdin = T.let(stdin, T.any(IO, StringIO))
-      @stdout = T.let(stdout, T.any(IO, StringIO))
-      @stderr = T.let(stderr, T.any(IO, StringIO))
+      @stdin = stdin
+      @stdout = stdout
+      @stderr = stderr
     end
 
     sig { returns(T::Boolean) }
@@ -303,6 +306,11 @@ module Homebrew
 
       require "open3"
 
+      formula_or_cask = request.dig("params", "arguments", "formula_or_cask")
+      if formula_or_cask.is_a?(String) && INLINE_CASK_DSL_REGEX.match?(formula_or_cask)
+        return respond_error(id, "Invalid formula or cask argument")
+      end
+
       command_args = tool_command_arguments(tool_name, request["params"]["arguments"])
       progress_token = request["params"]["_meta"]&.fetch("progressToken", nil)
       brew_command = T.cast(tool.fetch(:command), String)
@@ -356,8 +364,6 @@ module Homebrew
 
     sig { params(tool_name: Symbol, arguments: T::Hash[String, T.untyped]).returns(T::Array[String]) }
     def tool_command_arguments(tool_name, arguments)
-      require "shellwords"
-
       case tool_name
       when :style
         style_args = []
@@ -382,7 +388,6 @@ module Homebrew
         [arguments["formula_or_cask"]]
       end.compact
         .reject(&:empty?)
-        .map { |arg| Shellwords.escape(arg) }
     end
 
     sig {

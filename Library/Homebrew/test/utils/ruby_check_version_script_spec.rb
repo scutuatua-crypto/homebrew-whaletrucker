@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 RSpec.describe Utils do
@@ -12,6 +13,8 @@ RSpec.describe Utils do
         quiet_system RUBY_PATH, "#{HOMEBREW_LIBRARY_PATH}/utils/ruby_check_version_script.rb", required_ruby_version
       end
     end
+
+    let(:required_ruby_version) { "1.2.3" }
 
     before do
       ENV.delete("HOMEBREW_DEVELOPER")

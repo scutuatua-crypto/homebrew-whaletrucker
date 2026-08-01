@@ -32,7 +32,7 @@ module Utils
         return false unless formula.latest_version_installed?
 
         tab = Keg.new(formula.latest_installed_prefix).tab
-        tab.built_as_bottle
+        !!tab.built_as_bottle
       end
 
       sig { params(formula: Formula, file: Pathname).returns(T::Boolean) }
@@ -51,7 +51,7 @@ module Utils
 
       sig { params(filename: String).returns(T::Array[String]) }
       def extname_tag_rebuild(filename)
-        HOMEBREW_BOTTLES_EXTNAME_REGEX.match(filename).to_a
+        HOMEBREW_BOTTLES_EXTNAME_REGEX.match(filename).to_a.map(&:to_s)
       end
 
       sig { params(bottle_file: Pathname).returns(T.nilable(String)) }
@@ -105,7 +105,7 @@ module Utils
 
       sig {
         params(root_url: String, name: String, checksum: T.any(Checksum, String),
-               filename: T.nilable(Bottle::Filename)).returns(T.any([String, T.nilable(String)], String))
+               filename: T.nilable(Bottle::Filename)).returns(T.nilable(T.any([String, T.nilable(String)], String)))
       }
       def path_resolved_basename(root_url, name, checksum, filename)
         if root_url.match?(GitHubPackages::URL_REGEX)
@@ -122,9 +122,9 @@ module Utils
         tabfile = keg/AbstractTab::FILENAME
         bottle_json_path = formula.local_bottle_path&.sub(/\.(\d+\.)?tar\.gz$/, ".json")
 
-        if (tab_attributes = formula.bottle_tab_attributes.presence)
+        if bottle_json_path.nil? && (tab_attributes = formula.bottle_tab_attributes.presence)
           tab = Tab.from_file_content(tab_attributes.to_json, tabfile)
-          return tab if tab.built_on["os"] == HOMEBREW_SYSTEM
+          return tab if tab.built_on&.[]("os") == HOMEBREW_SYSTEM
         elsif !tabfile.exist? && bottle_json_path&.exist?
           _, tag, = Utils::Bottles.extname_tag_rebuild(formula.local_bottle_path.to_s)
           bottle_hash = JSON.parse(File.read(bottle_json_path))
@@ -140,6 +140,11 @@ module Utils
         end
 
         tab
+      end
+
+      sig { returns(String) }
+      def missing_all_bottle_publish_note
+        "publishing without one anyway"
       end
 
       private
@@ -175,6 +180,15 @@ module Utils
         system = T.must(match[:system]).to_sym
         arch = match[:arch]&.to_sym || :x86_64
         new(system:, arch:)
+      end
+
+      sig { params(arg: T.nilable(Symbol), os: Symbol, arch: Symbol).returns(T.attached_class) }
+      def self.from_arg(arg, os:, arch:)
+        if arg
+          from_symbol(arg)
+        else
+          new(system: os, arch:)
+        end
       end
 
       sig { params(system: Symbol, arch: Symbol).void }
@@ -262,9 +276,9 @@ module Utils
       sig { returns(String) }
       def default_prefix
         if linux?
-          HOMEBREW_LINUX_DEFAULT_PREFIX
+          T.must(HOMEBREW_LINUX_DEFAULT_PREFIX)
         elsif standardized_arch == :arm64
-          HOMEBREW_MACOS_ARM_DEFAULT_PREFIX
+          T.must(HOMEBREW_MACOS_ARM_DEFAULT_PREFIX)
         else
           HOMEBREW_DEFAULT_PREFIX
         end
@@ -372,13 +386,6 @@ module Utils
         @tag_specs[tag] if tag
       end
 
-      protected
-
-      sig { returns(T::Hash[Utils::Bottles::Tag, Utils::Bottles::TagSpecification]) }
-      attr_reader :tag_specs
-
-      private
-
       sig { params(tag: Utils::Bottles::Tag, no_older_versions: T::Boolean).returns(T.nilable(Utils::Bottles::Tag)) }
       def find_matching_tag(tag, no_older_versions: false)
         if @tag_specs.key?(tag)
@@ -388,6 +395,11 @@ module Utils
           all if @tag_specs.key?(all)
         end
       end
+
+      protected
+
+      sig { returns(T::Hash[Utils::Bottles::Tag, Utils::Bottles::TagSpecification]) }
+      attr_reader :tag_specs
     end
   end
 end

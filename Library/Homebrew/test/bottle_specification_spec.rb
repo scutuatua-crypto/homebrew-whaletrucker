@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "bottle_specification"
@@ -49,6 +50,69 @@ RSpec.describe BottleSpecification do
   describe "#tag_to_cellar" do
     it "returns the cellar for a tag" do
       expect(bottle_spec.tag_to_cellar).to eq Utils::Bottles.tag.default_cellar
+    end
+  end
+
+  describe "#skip_relocation?" do
+    let(:tag) { Utils::Bottles.tag.to_sym }
+    let(:digest) { "deadbeef" * 8 }
+
+    it "returns false when there is no matching spec" do
+      expect(bottle_spec.skip_relocation?).to be false
+    end
+
+    context "when running on Linux", :needs_linux do
+      context "with bottle built on Homebrew 5.1.15" do
+        let(:tab) { Tab.new(homebrew_version: "5.1.15") }
+
+        it "returns true for `:any_skip_relocation` cellar" do
+          bottle_spec.sha256(cellar: :any_skip_relocation, tag => digest)
+          expect(bottle_spec.skip_relocation?(tab:)).to be true
+        end
+
+        it "returns false for `:any` cellar" do
+          bottle_spec.sha256(cellar: :any, tag => digest)
+          expect(bottle_spec.skip_relocation?(tab:)).to be false
+        end
+      end
+
+      context "with bottle built on Homebrew 5.1.14" do
+        let(:tab) { Tab.new(homebrew_version: "5.1.14") }
+
+        it "returns false for `:any_skip_relocation` cellar" do
+          bottle_spec.sha256(cellar: :any_skip_relocation, tag => digest)
+          expect(bottle_spec.skip_relocation?(tab:)).to be false
+        end
+
+        it "returns false for `:any` cellar" do
+          bottle_spec.sha256(cellar: :any, tag => digest)
+          expect(bottle_spec.skip_relocation?(tab:)).to be false
+        end
+      end
+
+      context "without tab" do
+        it "returns false for `:any_skip_relocation` cellar" do
+          bottle_spec.sha256(cellar: :any_skip_relocation, tag => digest)
+          expect(bottle_spec.skip_relocation?).to be false
+        end
+
+        it "returns false for `:any` cellar" do
+          bottle_spec.sha256(cellar: :any, tag => digest)
+          expect(bottle_spec.skip_relocation?).to be false
+        end
+      end
+    end
+
+    context "when running on macOS", :needs_macos do
+      it "returns true for `:any_skip_relocation` cellar" do
+        bottle_spec.sha256(cellar: :any_skip_relocation, tag => digest)
+        expect(bottle_spec.skip_relocation?).to be true
+      end
+
+      it "returns false for `:any` cellar" do
+        bottle_spec.sha256(cellar: :any, tag => digest)
+        expect(bottle_spec.skip_relocation?).to be false
+      end
     end
   end
 

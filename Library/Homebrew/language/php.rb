@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "utils/path"
+
 module Language
   # Helper functions for PHP formulae.
   #
@@ -36,7 +38,7 @@ module Language
         raise ShebangDetectionError.new("PHP", "formula does not depend on PHP") if php_deps.empty?
         raise ShebangDetectionError.new("PHP", "formula has multiple PHP dependencies") if php_deps.length > 1
 
-        php_shebang_rewrite_info(Formula[php_deps.first].opt_bin/"php")
+        php_shebang_rewrite_info(Utils::Path.formula_opt_bin(php_deps.first)/"php")
       end
     end
   end

@@ -1,0 +1,21 @@
+name: Commit Style
+
+on:
+  pull_request:
+    branches: ["**"]
+
+permissions: {}
+
+jobs:
+  check-commit-format:
+    runs-on: ubuntu-slim
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: Check commit format
+        uses: Homebrew/actions/check-commit-format@9af03b7ae3f9e2ae5c174f659d5c3909f7e7dbac # 2026.07.29.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          check_package_commit_format: false

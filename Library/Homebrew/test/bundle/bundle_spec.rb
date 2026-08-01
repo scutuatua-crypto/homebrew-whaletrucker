@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "bundle"
@@ -40,17 +41,10 @@ RSpec.describe Homebrew::Bundle do
     end
   end
 
-  context "when checking for mas", :needs_macos do
-    it "finds it when present" do
-      stub_formula_loader formula("mas") { url "mas-1.0" }
-      allow(described_class).to receive(:which).and_return(true)
-      expect(described_class.mas_installed?).to be(true)
-    end
-  end
-
   describe ".mark_as_installed_on_request!", :no_api do
     subject(:mark_installed!) { described_class.mark_as_installed_on_request!(entries) }
 
+    let(:brewfile_content) { "brew 'myformula'" }
     let(:entries) { dsl.entries }
     let(:dsl) { Homebrew::Bundle::Dsl.new(Pathname.new("/fake/Brewfile")) }
     let(:tabfile) { Pathname.new("/fake/INSTALL_RECEIPT.json") }
@@ -62,7 +56,6 @@ RSpec.describe Homebrew::Bundle do
     end
 
     context "when formula is installed but not marked as installed_on_request" do
-      let(:brewfile_content) { "brew 'myformula'" }
       let(:tab) { instance_double(Tab, installed_on_request: false, tabfile:) }
 
       before do

@@ -19,9 +19,11 @@ module Homebrew
         switch "--eval-all",
                description: "Evaluate all available formulae and casks, whether installed or not, to show their " \
                             "options.",
-               env:         :eval_all
+               env:         :eval_all,
+               odeprecated: true
         flag   "--command=",
-               description: "Show options for the specified <command>."
+               description: "Show options for the specified <command>.",
+               odeprecated: true
 
         conflicts "--command", "--installed", "--eval-all"
 
@@ -31,6 +33,7 @@ module Homebrew
       sig { override.void }
       def run
         eval_all = args.eval_all?
+        eval_all ||= args.no_named? && Homebrew::EnvConfig.tap_trust_configured?
 
         if eval_all
           puts_options(Formula.all(eval_all:).sort)
@@ -47,7 +50,9 @@ module Homebrew
             puts
           end
         elsif args.no_named?
-          raise UsageError, "`brew options` needs a formula or `--eval-all` passed or `HOMEBREW_EVAL_ALL=1` set!"
+          raise UsageError,
+                "`brew options` needs a formula, `HOMEBREW_REQUIRE_TAP_TRUST=1` or " \
+                "`HOMEBREW_NO_REQUIRE_TAP_TRUST=1` set!"
         else
           puts_options args.named.to_formulae
         end

@@ -27,6 +27,7 @@ module Homebrew
       sig { override.void }
       def run
         Homebrew.setup_gem_environment!
+        ENV["PATH"] = (ENV.fetch("PATH").split(":") | ENV.fetch("HOMEBREW_PATH", "").split(":")).join(":")
         ENV["BUNDLE_WITH"] = Homebrew.valid_gem_groups.join(":")
 
         ohai "cd #{HOMEBREW_LIBRARY_PATH}"
@@ -73,7 +74,7 @@ module Homebrew
                           "--no-document", "--no-wrappers", "--ignore-dependencies", "--force"
               (HOMEBREW_LIBRARY_PATH/"vendor/gems").cd do
                 source = Pathname.glob("#{gem}-*/").first
-                next if source.blank?
+                next unless source
 
                 # We cannot use `#ln_sf` here because that has unintended consequences when
                 # the symlink we want to create exists and points to an existing directory.

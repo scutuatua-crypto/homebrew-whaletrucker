@@ -19,7 +19,8 @@ module Homebrew
           error message if no logs are found.
         EOS
         switch "--with-hostname",
-               description: "Include the hostname in the Gist."
+               description: "Include the hostname in the Gist.",
+               odeprecated: true
         switch "-n", "--new-issue",
                description: "Automatically create a new issue in the appropriate GitHub repository " \
                             "after creating the Gist."
@@ -37,6 +38,39 @@ module Homebrew
         return unless (formula = args.named.to_resolved_formulae.first)
 
         gistify_logs(formula)
+      end
+
+      # Truncates a text string to fit within a byte size constraint,
+      # preserving character encoding validity. The returned string will
+      # be not much longer than the specified max_bytes, though the exact
+      # shortfall or overrun may vary.
+      sig { params(str: String, max_bytes: Integer, options: T::Hash[Symbol, T.untyped]).returns(String) }
+      def self.truncate_text_to_approximate_size(str, max_bytes, options = {})
+        front_weight = options.fetch(:front_weight, 0.5)
+        raise "opts[:front_weight] must be between 0.0 and 1.0" if front_weight < 0.0 || front_weight > 1.0
+        return str if str.bytesize <= max_bytes
+
+        glue = "\n[...snip...]\n"
+        max_bytes_in = [max_bytes - glue.bytesize, 1].max
+        bytes = str.dup.force_encoding("BINARY")
+        glue_bytes = glue.encode("BINARY")
+        n_front_bytes = (max_bytes_in * front_weight).floor
+        n_back_bytes = max_bytes_in - n_front_bytes
+        if n_front_bytes.zero?
+          front = bytes[1..0]
+          back = bytes[-max_bytes_in..]
+        elsif n_back_bytes.zero?
+          front = bytes[0..(max_bytes_in - 1)]
+          back = bytes[1..0]
+        else
+          front = bytes[0..(n_front_bytes - 1)]
+          back = bytes[-n_back_bytes..]
+        end
+        out = T.must(front) + glue_bytes + T.must(back)
+        out.force_encoding("UTF-8")
+        out.encode!("UTF-16", invalid: :replace)
+        out.encode!("UTF-8")
+        out
       end
 
       private
@@ -85,8 +119,9 @@ module Homebrew
         end
 
         if args.new_issue?
-          url = GitHub.create_issue(formula.tap, "#{formula.name} failed to build on #{OS_VERSION}",
-                                    url)
+          tap = formula.tap
+          odie "Formula #{formula.name} is not associated with a tap!" unless tap
+          url = GitHub.create_issue(tap.full_name, "#{formula.name} failed to build on #{OS_VERSION}", url)
         end
 
         puts url if url
@@ -106,17 +141,7 @@ module Homebrew
         string.freeze
       end
 
-      # Causes some terminals to display secure password entry indicators.
-      sig { void }
-      def noecho_gets
-        system "stty", "-echo"
-        result = $stdin.gets
-        system "stty", "echo"
-        puts
-        result
-      end
-
-      sig { params(dir: Pathname, basedir: Pathname).returns(T::Hash[String, T::Hash[Symbol, String]]) }
+      sig { params(dir: Pathname, basedir: Pathname).returns(T::Hash[String, { content: String }]) }
       def load_logs(dir, basedir = dir)
         logs = {}
         if dir.exist?
@@ -127,7 +152,7 @@ module Homebrew
               contents = file.size? ? file.read : "empty log"
               # small enough to avoid GitHub "unicorn" page-load-timeout errors
               max_file_size = 1_000_000
-              contents = truncate_text_to_approximate_size(contents, max_file_size, front_weight: 0.2)
+              contents = GistLogs.truncate_text_to_approximate_size(contents, max_file_size, front_weight: 0.2)
               logs[file.relative_path_from(basedir).to_s.tr("/", ":")] = { content: contents }
             end
           end

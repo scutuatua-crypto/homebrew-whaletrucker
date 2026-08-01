@@ -1,9 +1,45 @@
+# typed: false
 # frozen_string_literal: true
 
 require "test/support/fixtures/testball"
 require "formula"
 
 RSpec.describe Formula do
+  describe "#change_dylib_id" do
+    subject(:f) do
+      formula "dylib-id-test" do
+        url "foo-1.0"
+      end
+    end
+
+    let(:dylib) { f.lib/"libfoo.1.dylib" }
+
+    before do
+      dylib.dirname.mkpath
+      FileUtils.touch dylib
+    end
+
+    after { f.prefix.rmtree }
+
+    it "uses the explicit source and dylib ID" do
+      unversioned_dylib = f.lib/"libfoo.dylib"
+      FileUtils.ln_s dylib, unversioned_dylib
+      expect(Homebrew::InstallSteps).to receive(:change_dylib_id)
+        .with(unversioned_dylib, f.opt_lib/"libfoo.dylib", resolve_source: false)
+
+      f.change_dylib_id unversioned_dylib, f.opt_lib/"libfoo.dylib"
+    end
+
+    it "can resolve the source symlink and codesigns on ARM" do
+      unversioned_dylib = f.lib/"libfoo.dylib"
+      FileUtils.ln_s dylib, unversioned_dylib
+      expect(Homebrew::InstallSteps).to receive(:change_dylib_id)
+        .with(unversioned_dylib, "@rpath/libfoo.dylib", resolve_source: true)
+
+      f.change_dylib_id unversioned_dylib, "@rpath/libfoo.dylib", resolve_source: true
+    end
+  end
+
   describe "#uses_from_macos" do
     before do
       allow(OS).to receive(:mac?).and_return(true)
@@ -12,6 +48,7 @@ RSpec.describe Formula do
 
     it "adds a macOS dependency to all specs if the OS version meets requirements" do
       f = formula "foo" do
+        T.bind(self, T.class_of(Formula))
         url "foo-1.0"
 
         uses_from_macos("foo", since: :big_sur)
@@ -27,6 +64,7 @@ RSpec.describe Formula do
 
     it "adds a dependency to any spec if the OS version doesn't meet requirements" do
       f = formula "foo" do
+        T.bind(self, T.class_of(Formula))
         url "foo-1.0"
 
         uses_from_macos("foo", since: :tahoe)
@@ -44,6 +82,7 @@ RSpec.describe Formula do
   describe "#on_macos" do
     it "adds a dependency on macos only" do
       f = formula do
+        T.bind(self, T.class_of(Formula))
         homepage "https://brew.sh"
 
         url "https://brew.sh/test-0.1.tbz"
@@ -67,6 +106,7 @@ RSpec.describe Formula do
 
     it "adds a patch on Mac only" do
       f = formula do
+        T.bind(self, T.class_of(Formula))
         homepage "https://brew.sh"
 
         url "https://brew.sh/test-0.1.tbz"
@@ -90,6 +130,7 @@ RSpec.describe Formula do
 
     it "uses on_macos within a resource block" do
       f = formula do
+        T.bind(self, T.class_of(Formula))
         homepage "https://brew.sh"
 
         url "https://brew.sh/test-0.1.tbz"

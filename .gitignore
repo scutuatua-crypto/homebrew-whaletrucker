@@ -13,14 +13,19 @@
 /Library/Homebrew/doc
 /Library/Homebrew/prof
 /Library/Homebrew/test/.gem
+/Library/Homebrew/test/.cargo/
+/Library/Homebrew/test/.homebrew/
 /Library/Homebrew/test/.subversion
 /Library/Homebrew/test/coverage
 /Library/Homebrew/test/junit
 /Library/Homebrew/test/fs_leak_log
 /Library/Homebrew/vendor/portable-ruby
+/Library/Homebrew/vendor/brew-rs/
+/Library/Homebrew/rust/brew-rs
 /Library/Taps
 /Library/PinnedTaps
 /Library/Homebrew/.byebug_history
+/Library/Homebrew/test/.npm/
 /Library/Homebrew/test/.rdbg_history
 
 # Ignore Bundler files
@@ -40,7 +45,7 @@
 # Ignore Ruby gems for versions other than we explicitly vendor.
 # Keep this in sync with the list in standalone/init.rb.
 **/vendor/bundle/ruby/*/
-!**/vendor/bundle/ruby/3.4.0/
+!**/vendor/bundle/ruby/4.0.0/
 
 # Ignore Bundler binary files
 **/vendor/bundle/ruby/*/gems/**/*.bundle
@@ -49,6 +54,7 @@
 **/.yardoc
 
 # Unignore vendored gems
+!**/vendor/bundle/ruby/*/gems/*/*COPYING*
 !**/vendor/bundle/ruby/*/gems/*/*LICENSE*
 !**/vendor/bundle/ruby/*/gems/*/lib
 !**/vendor/bundle/ruby/*/gems/addressable-*/data
@@ -82,6 +88,7 @@
 **/vendor/bundle/ruby/*/gems/csv-*/
 **/vendor/bundle/ruby/*/gems/diff-lcs-*/
 **/vendor/bundle/ruby/*/gems/docile-*/
+**/vendor/bundle/ruby/*/gems/drb-*/
 **/vendor/bundle/ruby/*/gems/ecma-re-validator-*/
 **/vendor/bundle/ruby/*/gems/erubi-*/
 **/vendor/bundle/ruby/*/gems/hana-*/
@@ -93,13 +100,14 @@
 **/vendor/bundle/ruby/*/gems/kramdown-*/
 **/vendor/bundle/ruby/*/gems/language_server-protocol-*/
 **/vendor/bundle/ruby/*/gems/lint_roller-*/
-**/vendor/bundle/ruby/*/gems/logger-*/
+**/vendor/bundle/ruby/*/gems/mcp-*/
 **/vendor/bundle/ruby/*/gems/method_source-*/
 **/vendor/bundle/ruby/*/gems/mini_portile2-*/
 **/vendor/bundle/ruby/*/gems/minitest-*/
 **/vendor/bundle/ruby/*/gems/msgpack-*/
 **/vendor/bundle/ruby/*/gems/netrc-*/
 **/vendor/bundle/ruby/*/gems/ntlm-http-*/
+**/vendor/bundle/ruby/*/gems/ostruct-*/
 **/vendor/bundle/ruby/*/gems/parallel-*/
 **/vendor/bundle/ruby/*/gems/parallel_tests-*/
 **/vendor/bundle/ruby/*/gems/parlour-*/
@@ -129,6 +137,7 @@
 **/vendor/bundle/ruby/*/gems/rspec-support-*/
 **/vendor/bundle/ruby/*/gems/rspec-sorbet-*/
 **/vendor/bundle/ruby/*/gems/rubocop-*/
+**/vendor/bundle/ruby/*/gems/rubydex-*/
 **/vendor/bundle/ruby/*/gems/ruby-lsp-*/
 **/vendor/bundle/ruby/*/gems/ruby-prof-*/
 **/vendor/bundle/ruby/*/gems/ruby-progressbar-*/
@@ -145,6 +154,7 @@
 **/vendor/bundle/ruby/*/gems/tapioca-*/
 **/vendor/bundle/ruby/*/gems/test-prof-*/
 **/vendor/bundle/ruby/*/gems/thor-*/
+**/vendor/bundle/ruby/*/gems/tsort-*/
 **/vendor/bundle/ruby/*/gems/unicode-display_width-*/
 **/vendor/bundle/ruby/*/gems/unicode-emoji-*/
 **/vendor/bundle/ruby/*/gems/unparser-*/
@@ -178,7 +188,6 @@
 /docs/_site
 /docs/.jekyll-metadata
 /docs/vendor
-/docs/Gemfile.lock
 /docs/rubydoc
 
 # Unignore our root-level metadata files.
@@ -208,6 +217,7 @@
 # Unignore AI configuration
 !/.cursor
 !/.claude
+!/.codex
 
 # Ignore local AI configuration
 /.claude/settings.local.json

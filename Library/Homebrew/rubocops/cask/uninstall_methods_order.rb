@@ -12,24 +12,16 @@ module RuboCop
         extend AutoCorrector
         include HelperFunctions
 
-        MSG = T.let("`%<method>s` method out of order", String)
+        MSG = "`%<method>s` method out of order"
 
         # These keys are ignored when checking method order.
         # Mirrors AbstractUninstall::METADATA_KEYS.
-        METADATA_KEYS = T.let(
-          [:on_upgrade].freeze,
-          T::Array[Symbol],
-        )
+        METADATA_KEYS = [:on_upgrade].freeze
 
-        USELESS_METADATA_MSG = T.let(
-          "`on_upgrade` has no effect without matching `uninstall quit:` or `uninstall signal:` directives",
-          String,
-        )
+        USELESS_METADATA_MSG =
+          "`on_upgrade` has no effect without matching `uninstall signal:` directive"
 
-        PARTIAL_METADATA_MSG = T.let(
-          "`on_upgrade` lists %<symbols>s without matching `uninstall` directives",
-          String,
-        )
+        PARTIAL_METADATA_MSG = "`on_upgrade` lists %<symbols>s without matching `uninstall` directives"
 
         sig { params(node: AST::SendNode).void }
         def on_send(node)
@@ -99,7 +91,6 @@ module RuboCop
           return report_fully_invalid_metadata(on_upgrade_pair) if requested.empty?
 
           available = []
-          available << :quit   if hash_node.pairs.any? { |p| p.key.value == :quit }
           available << :signal if hash_node.pairs.any? { |p| p.key.value == :signal }
 
           valid_syms   = requested & available
@@ -116,7 +107,7 @@ module RuboCop
         sig { params(on_upgrade_pair: AST::PairNode).void }
         def report_fully_invalid_metadata(on_upgrade_pair)
           add_offense(on_upgrade_pair.value,
-                      message: "`on_upgrade` value must be :quit, :signal, or an array of those symbols")
+                      message: "`on_upgrade` value must be :signal or an array [:signal]")
         end
 
         sig {
@@ -141,7 +132,7 @@ module RuboCop
           end
 
           add_offense(on_upgrade_pair.key, message: USELESS_METADATA_MSG) do |corrector|
-            first_pair = T.must(remaining_pairs.first)
+            first_pair = remaining_pairs.fetch(0)
             indentation = " " * (start_column(first_pair.key) - line_start_column(first_pair.key))
 
             new_code = build_uninstall_body(remaining_pairs, comments, indentation)

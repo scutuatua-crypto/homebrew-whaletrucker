@@ -5,6 +5,8 @@ require "requirement"
 
 # A requirement on Xcode.
 class XcodeRequirement < Requirement
+  Cache = type_template { { fixed: T::Hash[String, T.untyped] } }
+
   fatal true
 
   sig { returns(T.nilable(String)) }

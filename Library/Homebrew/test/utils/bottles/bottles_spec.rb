@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "utils/bottles"
@@ -14,6 +15,13 @@ RSpec.describe Utils::Bottles do
     end
   end
 
+  describe ".extname_tag_rebuild" do
+    it "returns an empty rebuild for bottles without rebuilds" do
+      expect(described_class.extname_tag_rebuild("gh--2.93.0.arm64_sonoma.bottle.tar.gz"))
+        .to eq([".arm64_sonoma.bottle.tar.gz", "arm64_sonoma", ""])
+    end
+  end
+
   describe ".load_tab" do
     context "when tab_attributes and tabfile are missing" do
       before do
@@ -26,7 +34,6 @@ RSpec.describe Utils::Bottles do
             version "0.1"
           end
         RUBY
-        Formulary.cache.delete(dep_path)
 
         # setup a testball2, that depends on testball1
         formula_name = "testball2"
@@ -38,7 +45,6 @@ RSpec.describe Utils::Bottles do
             depends_on "testball1"
           end
         RUBY
-        Formulary.cache.delete(formula_path)
       end
 
       it "includes runtime_dependencies" do

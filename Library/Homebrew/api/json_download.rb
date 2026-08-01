@@ -6,13 +6,6 @@ require "downloadable"
 module Homebrew
   module API
     class JSONDownloadStrategy < AbstractDownloadStrategy
-      sig { params(url: String, name: String, version: T.nilable(T.any(String, Version)), meta: T.untyped).void }
-      def initialize(url, name, version, **meta)
-        super
-        @target = T.let(meta.fetch(:target), Pathname)
-        @stale_seconds = T.let(meta[:stale_seconds], T.nilable(Integer))
-      end
-
       sig { override.params(timeout: T.nilable(T.any(Integer, Float))).returns(Pathname) }
       def fetch(timeout: nil)
         with_context quiet: quiet? do
@@ -39,8 +32,6 @@ module Homebrew
       def initialize(url, target:, stale_seconds:)
         super()
         @url = T.let(URL.new(url, using: API::JSONDownloadStrategy, target:, stale_seconds:), URL)
-        @target = target
-        @stale_seconds = stale_seconds
       end
 
       sig { override.returns(API::JSONDownloadStrategy) }

@@ -12,6 +12,7 @@ module DeprecateDisable
     repo_archived:       "has an archived upstream repository",
     repo_removed:        "has a removed upstream repository",
     unmaintained:        "is not maintained upstream",
+    unreachable:         "is no longer reliably reachable upstream",
     unsupported:         "is not supported upstream",
     deprecated_upstream: "is deprecated upstream",
     versioned_formula:   "is a versioned formula",

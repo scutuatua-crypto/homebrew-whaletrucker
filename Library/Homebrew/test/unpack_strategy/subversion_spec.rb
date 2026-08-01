@@ -1,8 +1,9 @@
+# typed: true
 # frozen_string_literal: true
 
 require_relative "shared_examples"
 
-RSpec.describe UnpackStrategy::Subversion, :needs_svn do
+RSpec.describe UnpackStrategy::Subversion, :needs_svnadmin do
   let(:repo) { mktmpdir }
   let(:working_copy) { mktmpdir }
   let(:path) { working_copy }

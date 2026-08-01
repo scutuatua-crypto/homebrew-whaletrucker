@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "download_strategy"
@@ -9,7 +10,6 @@ RSpec.describe AbstractDownloadStrategy do
   let(:name) { "foo" }
   let(:url) { "https://example.com/foo.tar.gz" }
   let(:version) { nil }
-  let(:args) { %w[foo bar baz] }
 
   specify "#source_modified_time" do
     mktmpdir("mtime").cd do

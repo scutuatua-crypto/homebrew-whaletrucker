@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 require "utils/shell"
+require "utils/path"
 
 # Checks to perform on a formula's keg (versioned Cellar path).
 module FormulaCellarChecks
@@ -214,7 +215,7 @@ module FormulaCellarChecks
                       .filter_map { |d| Formula[d].version.to_s[/^\d+\.\d+/] }
 
     return if python_deps.blank?
-    return if pythons.any? { |v| python_deps.include? v }
+    return if pythons.intersect?(python_deps)
 
     pythons = pythons.map { |v| "Python #{v}" }
     python_deps = python_deps.map { |v| "Python #{v}" }
@@ -255,6 +256,7 @@ module FormulaCellarChecks
   def check_plist(prefix, plist)
     return unless prefix.directory?
 
+    require "plist"
     plist = begin
       Plist.parse_xml(plist, marshal: false)
     rescue
@@ -323,8 +325,12 @@ module FormulaCellarChecks
 
     # macOS `objdump` is a bit slow, so we prioritise llvm's `llvm-objdump` (~5.7x faster)
     # or binutils' `objdump` (~1.8x faster) if they are installed.
-    objdump   = Formula["llvm"].opt_bin/"llvm-objdump" if Formula["llvm"].any_version_installed?
-    objdump ||= Formula["binutils"].opt_bin/"objdump" if Formula["binutils"].any_version_installed?
+    if Utils::Path.formula_any_version_installed?("llvm")
+      objdump   = Utils::Path.formula_opt_bin("llvm")/"llvm-objdump"
+    end
+    if Utils::Path.formula_any_version_installed?("binutils")
+      objdump ||= Utils::Path.formula_opt_bin("binutils")/"objdump"
+    end
     objdump ||= which("objdump")
     objdump ||= which("objdump", ORIGINAL_PATHS)
 

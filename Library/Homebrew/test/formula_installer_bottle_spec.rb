@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "formula"
@@ -21,8 +22,18 @@ RSpec.describe FormulaInstaller do
     expect(formula).to be_bottled
     expect(formula).to pour_bottle
 
-    stub_formula_loader formula("gcc") { url "gcc-1.0" }
-    stub_formula_loader formula("glibc") { url "glibc-1.0" }
+    stub_formula_loader(
+      formula("gcc") do
+        T.bind(self, T.class_of(Formula))
+        url "gcc-1.0"
+      end,
+    )
+    stub_formula_loader(
+      formula("glibc") do
+        T.bind(self, T.class_of(Formula))
+        url "glibc-1.0"
+      end,
+    )
     stub_formula_loader formula
 
     fi = FormulaInstaller.new(formula)
@@ -102,7 +113,7 @@ RSpec.describe FormulaInstaller do
 
     expect do
       described_class.new(formula).install
-    end.to raise_error(UnbottledError)
+    end.to raise_error(SystemExit)
 
     expect(formula).not_to be_latest_version_installed
   end

@@ -11,9 +11,6 @@ require "shell_command"
 module Homebrew
   module Cmd
     class WhichFormula < AbstractCommand
-      ENDPOINT = "internal/executables.txt"
-      DATABASE_FILE = T.let((Homebrew::API::HOMEBREW_CACHE_API/ENDPOINT).freeze, Pathname)
-
       include ShellCommand
 
       cmd_args do
@@ -22,8 +19,6 @@ module Homebrew
         EOS
         switch "--explain",
                description: "Output explanation of how to get <command> by installing one of the providing formulae."
-        switch "--skip-update",
-               description: "Skip updating the executables database if any version exists on disk, no matter how old."
         named_args :command, min: 1
       end
     end

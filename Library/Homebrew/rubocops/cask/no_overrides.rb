@@ -74,7 +74,8 @@ module RuboCop
                    send_node.arguments.first.pairs.any? { |a| a.key.value == :macos } &&
                    OnSystemConditionalsHelper::ON_SYSTEM_OPTIONS.map do |m|
                      :"on_#{m}"
-                   end.include?(T.cast(node, RuboCop::AST::BlockNode).method_name) && !allow_macos_depends_in_blocks
+                   end.include?(T.cast(node, RuboCop::AST::BlockNode).method_name) &&
+                   T.cast(node, RuboCop::AST::BlockNode).method_name != :on_macos && !allow_macos_depends_in_blocks
                   # Allow `depends_on macos:` in multiple `on_{system}` blocks for architecture-specific requirements
                   add_offense(send_node.source_range, message:)
                 end

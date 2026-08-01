@@ -3,26 +3,34 @@
 
 require "system_command"
 require "extend/pathname/disk_usage_extension"
+require "extend/pathname/eager_initialize_extension"
 require "extend/pathname/observer_pathname_extension"
 require "extend/pathname/write_mkpath_extension"
 require "utils/output"
 
 # Stubs needed to keep Sorbet happy.
+# rubocop:disable Style/OneClassPerFile
+
+# {Pathname} extension for dealing with Mach-O files.
 module MachOShim; end
+
+# {Pathname} extension for dealing with ELF files.
 module ELFShim; end
 
 # @api private
 module BinaryPathname
   sig { params(path: T.any(Pathname, String, MachOShim, ELFShim)).returns(T.any(MachOShim, ELFShim)) }
-  def self.wrap(path) = raise NotImplementedError
+  def self.wrap(path) = raise(NotImplementedError)
 end
 
 # Homebrew extends Ruby's `Pathname` to make our code more readable.
 # @see https://ruby-doc.org/stdlib-2.6.3/libdoc/pathname/rdoc/Pathname.html Ruby's Pathname API
+# TODO: move all of these to other modules e.g. Utils.
 class Pathname
   include SystemCommand::Mixin
   include DiskUsageExtension
   include Utils::Output::Mixin
+  prepend EagerInitializeExtension
 
   sig { void }
   def self.activate_extensions!
@@ -289,6 +297,8 @@ class Pathname
   end
 
   # Writes an exec script in this folder for each target pathname.
+  #
+  # @api public
   sig { params(targets: T.any(T::Array[T.any(String, Pathname)], String, Pathname)).void }
   def write_exec_script(*targets)
     targets.flatten!
@@ -307,10 +317,18 @@ class Pathname
   end
 
   # Writes an exec script that sets environment variables.
+  #
+  # @api public
   sig {
-    params(target:      T.any(Pathname, String),
-           args_or_env: T.any(String, T::Array[String], T::Hash[String, String], T::Hash[Symbol, String]),
-           env:         T.any(T::Hash[String, String], T::Hash[Symbol, String])).void
+    params(
+      target:      T.any(Pathname, String),
+      args_or_env: T.any(
+        String, Pathname,
+        T::Array[T.any(String, Pathname)],
+        T::Hash[T.any(String, Symbol), T.any(String, Pathname)]
+      ),
+      env:         T::Hash[T.any(String, Symbol), T.any(String, Pathname)],
+    ).void
   }
   def write_env_script(target, args_or_env, env = T.unsafe(nil))
     args = if env.nil?
@@ -320,7 +338,7 @@ class Pathname
     elsif args_or_env.is_a?(Array)
       args_or_env.join(" ")
     else
-      T.cast(args_or_env, T.nilable(String))
+      T.cast(args_or_env, T.nilable(T.any(String, Pathname)))
     end
 
     env_export = +""
@@ -332,10 +350,13 @@ class Pathname
       #!/bin/bash
       #{env_export}exec "#{target}" #{args} "$@"
     SH
+    chmod 0555
   end
 
   # Writes a wrapper env script and moves all files to the dst.
-  sig { params(dst: Pathname, env: T::Hash[String, String]).void }
+  #
+  # @api public
+  sig { params(dst: Pathname, env: T::Hash[T.any(String, Symbol), T.any(String, Pathname)]).void }
   def env_script_all_files(dst, env)
     dst.mkpath
     Pathname.glob("#{self}/*") do |file|
@@ -350,6 +371,8 @@ class Pathname
   end
 
   # Writes an exec script that invokes a Java jar.
+  #
+  # @api public
   sig {
     params(
       target_jar:   T.any(String, Pathname),
@@ -490,9 +513,11 @@ class Pathname
     @which_install_info ||=
       if File.executable?("/usr/bin/install-info")
         "/usr/bin/install-info"
-      elsif (texinfo_formula = Formulary.factory_stub("texinfo")).any_version_installed?
+      elsif (texinfo_formula = Formula["texinfo"]).any_version_installed?
         (texinfo_formula.opt_bin/"install-info").to_s
       end
   end
 end
+# rubocop:enable Style/OneClassPerFile
+#
 require "extend/os/pathname"

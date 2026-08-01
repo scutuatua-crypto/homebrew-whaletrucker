@@ -11,6 +11,23 @@ module Cask
     extend ::Utils::Output::Mixin
 
     BUG_REPORTS_URL = "https://github.com/Homebrew/homebrew-cask#reporting-bugs"
+    FULL_DISK_ACCESS_TCC_PATH = "~/Library/Application Support/com.apple.TCC"
+
+    sig { params(access: String).returns(String) }
+    def self.privacy_security_preference_pane(access)
+      navigation_path = if MacOS.version >= :ventura
+        "System Settings → Privacy & Security"
+      else
+        "System Preferences → Security & Privacy → Privacy"
+      end
+
+      "#{navigation_path} → #{access}"
+    end
+
+    sig { returns(T::Boolean) }
+    def self.full_disk_access_enabled?
+      File.readable?(File.expand_path(FULL_DISK_ACCESS_TCC_PATH))
+    end
 
     sig { params(path: Pathname, command: T.class_of(SystemCommand)).void }
     def self.gain_permissions_mkpath(path, command: SystemCommand)
@@ -104,7 +121,7 @@ module Cask
           #       before using `sudo` and `chown`.
           ohai "Using sudo to gain ownership of path '#{path}'"
           command.run("chown",
-                      args: command_args + ["--", User.current, path],
+                      args: command_args + ["--", User.current.to_s, path],
                       sudo: true)
           tried_ownership = true
           # retry chflags/chmod after chown
@@ -130,23 +147,6 @@ module Cask
           .gsub(/--+/, "-")
           .delete_prefix("-")
           .delete_suffix("-")
-    end
-
-    sig { returns(String) }
-    def self.error_message_with_suggestions
-      <<~EOS
-        Follow the instructions here:
-          #{Formatter.url(BUG_REPORTS_URL)}
-      EOS
-    end
-
-    sig { params(method: Symbol, token: String, section: T.nilable(String)).void }
-    def self.method_missing_message(method, token, section = nil)
-      message = "Unexpected method '#{method}' called "
-      message << "during #{section} " if section
-      message << "on Cask #{token}."
-
-      ofail "#{message}\n#{error_message_with_suggestions}"
     end
   end
 end

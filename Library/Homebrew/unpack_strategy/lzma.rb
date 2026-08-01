@@ -29,7 +29,7 @@ module UnpackStrategy
       quiet_flags = verbose ? [] : ["-q"]
       system_command! "unlzma",
                       args:    [*quiet_flags, "--", unpack_dir/basename],
-                      env:     { "PATH" => PATH.new(Formula["xz"].opt_bin, ENV.fetch("PATH")) },
+                      env:     Utils::Path.formula_opt_bin_env("xz"),
                       verbose:
     end
   end

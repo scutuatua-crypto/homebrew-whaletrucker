@@ -1,10 +1,10 @@
+# typed: true
 # frozen_string_literal: true
 
 require "diagnostic"
 
 RSpec.describe Homebrew::Attestation do
   let(:fake_gh) { Pathname.new("/extremely/fake/gh") }
-  let(:fake_old_gh) { Pathname.new("/extremely/fake/old/gh") }
   let(:fake_gh_creds) { "fake-gh-api-token" }
   let(:fake_error_status) { instance_double(Process::Status, exitstatus: 1, termsig: nil) }
   let(:fake_auth_status) { instance_double(Process::Status, exitstatus: 4, termsig: nil) }
@@ -136,8 +136,8 @@ RSpec.describe Homebrew::Attestation do
 
       expect do
         described_class.check_attestation fake_bottle,
-                                          described_class::HOMEBREW_CORE_REPO
-      end.to raise_error(described_class::GhAuthNeeded)
+                                          Homebrew::Attestation::HOMEBREW_CORE_REPO
+      end.to raise_error(Homebrew::Attestation::GhAuthNeeded)
     end
 
     it "raises when gh subprocess fails" do
@@ -146,15 +146,15 @@ RSpec.describe Homebrew::Attestation do
 
       expect(described_class).to receive(:system_command!)
         .with(fake_gh, args: ["attestation", "verify", cached_download, "--repo",
-                              described_class::HOMEBREW_CORE_REPO, "--format", "json"],
+                              Homebrew::Attestation::HOMEBREW_CORE_REPO, "--format", "json"],
               env: { "GH_TOKEN" => fake_gh_creds, "GH_HOST" => "github.com" }, secrets: [fake_gh_creds],
               print_stderr: false, chdir: HOMEBREW_TEMP)
         .and_raise(ErrorDuringExecution.new(["foo"], status: fake_error_status))
 
       expect do
         described_class.check_attestation fake_bottle,
-                                          described_class::HOMEBREW_CORE_REPO
-      end.to raise_error(described_class::InvalidAttestationError)
+                                          Homebrew::Attestation::HOMEBREW_CORE_REPO
+      end.to raise_error(Homebrew::Attestation::InvalidAttestationError)
     end
 
     it "raises auth error when gh subprocess fails with auth exit code" do
@@ -163,15 +163,15 @@ RSpec.describe Homebrew::Attestation do
 
       expect(described_class).to receive(:system_command!)
         .with(fake_gh, args: ["attestation", "verify", cached_download, "--repo",
-                              described_class::HOMEBREW_CORE_REPO, "--format", "json"],
+                              Homebrew::Attestation::HOMEBREW_CORE_REPO, "--format", "json"],
               env: { "GH_TOKEN" => fake_gh_creds, "GH_HOST" => "github.com" }, secrets: [fake_gh_creds],
               print_stderr: false, chdir: HOMEBREW_TEMP)
         .and_raise(ErrorDuringExecution.new(["foo"], status: fake_auth_status))
 
       expect do
         described_class.check_attestation fake_bottle,
-                                          described_class::HOMEBREW_CORE_REPO
-      end.to raise_error(described_class::GhAuthInvalid)
+                                          Homebrew::Attestation::HOMEBREW_CORE_REPO
+      end.to raise_error(Homebrew::Attestation::GhAuthInvalid)
     end
 
     it "raises when gh returns invalid JSON" do
@@ -180,15 +180,15 @@ RSpec.describe Homebrew::Attestation do
 
       expect(described_class).to receive(:system_command!)
         .with(fake_gh, args: ["attestation", "verify", cached_download, "--repo",
-                              described_class::HOMEBREW_CORE_REPO, "--format", "json"],
+                              Homebrew::Attestation::HOMEBREW_CORE_REPO, "--format", "json"],
               env: { "GH_TOKEN" => fake_gh_creds, "GH_HOST" => "github.com" }, secrets: [fake_gh_creds],
               print_stderr: false, chdir: HOMEBREW_TEMP)
         .and_return(fake_result_invalid_json)
 
       expect do
         described_class.check_attestation fake_bottle,
-                                          described_class::HOMEBREW_CORE_REPO
-      end.to raise_error(described_class::InvalidAttestationError)
+                                          Homebrew::Attestation::HOMEBREW_CORE_REPO
+      end.to raise_error(Homebrew::Attestation::InvalidAttestationError)
     end
 
     it "raises when gh returns other subjects" do
@@ -197,15 +197,15 @@ RSpec.describe Homebrew::Attestation do
 
       expect(described_class).to receive(:system_command!)
         .with(fake_gh, args: ["attestation", "verify", cached_download, "--repo",
-                              described_class::HOMEBREW_CORE_REPO, "--format", "json"],
+                              Homebrew::Attestation::HOMEBREW_CORE_REPO, "--format", "json"],
               env: { "GH_TOKEN" => fake_gh_creds, "GH_HOST" => "github.com" }, secrets: [fake_gh_creds],
               print_stderr: false, chdir: HOMEBREW_TEMP)
         .and_return(fake_json_resp_wrong_sub)
 
       expect do
         described_class.check_attestation fake_bottle,
-                                          described_class::HOMEBREW_CORE_REPO
-      end.to raise_error(described_class::InvalidAttestationError)
+                                          Homebrew::Attestation::HOMEBREW_CORE_REPO
+      end.to raise_error(Homebrew::Attestation::InvalidAttestationError)
     end
 
     it "checks subject prefix when the bottle is an :all bottle" do
@@ -214,12 +214,12 @@ RSpec.describe Homebrew::Attestation do
 
       expect(described_class).to receive(:system_command!)
         .with(fake_gh, args: ["attestation", "verify", cached_download, "--repo",
-                              described_class::HOMEBREW_CORE_REPO, "--format", "json"],
+                              Homebrew::Attestation::HOMEBREW_CORE_REPO, "--format", "json"],
               env: { "GH_TOKEN" => fake_gh_creds, "GH_HOST" => "github.com" }, secrets: [fake_gh_creds],
               print_stderr: false, chdir: HOMEBREW_TEMP)
         .and_return(fake_result_json_resp)
 
-      described_class.check_attestation fake_all_bottle, described_class::HOMEBREW_CORE_REPO
+      described_class.check_attestation fake_all_bottle, Homebrew::Attestation::HOMEBREW_CORE_REPO
     end
   end
 
@@ -235,7 +235,7 @@ RSpec.describe Homebrew::Attestation do
     it "calls gh with args for homebrew-core" do
       expect(described_class).to receive(:system_command!)
         .with(fake_gh, args: ["attestation", "verify", cached_download, "--repo",
-                              described_class::HOMEBREW_CORE_REPO, "--format", "json"],
+                              Homebrew::Attestation::HOMEBREW_CORE_REPO, "--format", "json"],
               env: { "GH_TOKEN" => fake_gh_creds, "GH_HOST" => "github.com" }, secrets: [fake_gh_creds],
               print_stderr: false, chdir: HOMEBREW_TEMP)
         .and_return(fake_result_json_resp)
@@ -246,7 +246,7 @@ RSpec.describe Homebrew::Attestation do
     it "calls gh with args for homebrew-core and handles a multi-subject attestation" do
       expect(described_class).to receive(:system_command!)
         .with(fake_gh, args: ["attestation", "verify", cached_download, "--repo",
-                              described_class::HOMEBREW_CORE_REPO, "--format", "json"],
+                              Homebrew::Attestation::HOMEBREW_CORE_REPO, "--format", "json"],
               env: { "GH_TOKEN" => fake_gh_creds, "GH_HOST" => "github.com" }, secrets: [fake_gh_creds],
               print_stderr: false, chdir: HOMEBREW_TEMP)
         .and_return(fake_result_json_resp_multi_subject)
@@ -257,15 +257,15 @@ RSpec.describe Homebrew::Attestation do
     it "calls gh with args for backfill when homebrew-core attestation is missing" do
       expect(described_class).to receive(:system_command!)
         .with(fake_gh, args: ["attestation", "verify", cached_download, "--repo",
-                              described_class::HOMEBREW_CORE_REPO, "--format", "json"],
+                              Homebrew::Attestation::HOMEBREW_CORE_REPO, "--format", "json"],
               env: { "GH_TOKEN" => fake_gh_creds, "GH_HOST" => "github.com" }, secrets: [fake_gh_creds],
               print_stderr: false, chdir: HOMEBREW_TEMP)
         .once
-        .and_raise(described_class::MissingAttestationError)
+        .and_raise(Homebrew::Attestation::MissingAttestationError)
 
       expect(described_class).to receive(:system_command!)
         .with(fake_gh, args: ["attestation", "verify", cached_download, "--repo",
-                              described_class::BACKFILL_REPO, "--format", "json"],
+                              Homebrew::Attestation::BACKFILL_REPO, "--format", "json"],
               env: { "GH_TOKEN" => fake_gh_creds, "GH_HOST" => "github.com" }, secrets: [fake_gh_creds],
               print_stderr: false, chdir: HOMEBREW_TEMP)
         .and_return(fake_result_json_resp_backfill)
@@ -276,23 +276,23 @@ RSpec.describe Homebrew::Attestation do
     it "raises when the backfilled attestation is too new" do
       expect(described_class).to receive(:system_command!)
         .with(fake_gh, args: ["attestation", "verify", cached_download, "--repo",
-                              described_class::HOMEBREW_CORE_REPO, "--format", "json"],
+                              Homebrew::Attestation::HOMEBREW_CORE_REPO, "--format", "json"],
               env: { "GH_TOKEN" => fake_gh_creds, "GH_HOST" => "github.com" }, secrets: [fake_gh_creds],
               print_stderr: false, chdir: HOMEBREW_TEMP)
-        .exactly(described_class::ATTESTATION_MAX_RETRIES + 1)
-        .and_raise(described_class::MissingAttestationError)
+        .exactly(Homebrew::Attestation::ATTESTATION_MAX_RETRIES + 1)
+        .and_raise(Homebrew::Attestation::MissingAttestationError)
 
       expect(described_class).to receive(:system_command!)
         .with(fake_gh, args: ["attestation", "verify", cached_download, "--repo",
-                              described_class::BACKFILL_REPO, "--format", "json"],
+                              Homebrew::Attestation::BACKFILL_REPO, "--format", "json"],
               env: { "GH_TOKEN" => fake_gh_creds, "GH_HOST" => "github.com" }, secrets: [fake_gh_creds],
               print_stderr: false, chdir: HOMEBREW_TEMP)
-        .exactly(described_class::ATTESTATION_MAX_RETRIES + 1)
+        .exactly(Homebrew::Attestation::ATTESTATION_MAX_RETRIES + 1)
         .and_return(fake_result_json_resp_too_new)
 
       expect do
         described_class.check_core_attestation fake_bottle
-      end.to raise_error(described_class::InvalidAttestationError)
+      end.to raise_error(Homebrew::Attestation::InvalidAttestationError)
     end
   end
 end

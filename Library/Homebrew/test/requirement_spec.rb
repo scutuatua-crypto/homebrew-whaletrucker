@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "extend/ENV"
@@ -153,6 +154,56 @@ RSpec.describe Requirement do
         requirement.modify_build_environment
       end
     end
+
+    describe "#satisfy with block returning path under HOMEBREW_PREFIX/bin" do
+      let(:klass) do
+        Class.new(described_class) do
+          satisfy do
+            HOMEBREW_PREFIX/"bin/foo"
+          end
+        end
+      end
+
+      it "does not prepend the parent to PATH" do
+        without_partial_double_verification do
+          expect(ENV).not_to receive(:prepend_path)
+        end
+        requirement.satisfied?
+        requirement.modify_build_environment
+      end
+    end
+
+    describe "#satisfy with block returning path under HOMEBREW_PREFIX/sbin" do
+      let(:klass) do
+        Class.new(described_class) do
+          satisfy do
+            HOMEBREW_PREFIX/"sbin/foo"
+          end
+        end
+      end
+
+      it "does not prepend the parent to PATH" do
+        without_partial_double_verification do
+          expect(ENV).not_to receive(:prepend_path)
+        end
+        requirement.satisfied?
+        requirement.modify_build_environment
+      end
+    end
+
+    describe "#satisfy with block calling #which and :build_env set to false" do
+      let(:klass) do
+        Class.new(described_class) do
+          satisfy(build_env: false) do
+            which("sh")
+          end
+        end
+      end
+
+      it "does not raise an error" do
+        expect { requirement.satisfied? }.not_to raise_error
+      end
+    end
   end
 
   describe "#build?" do
@@ -169,7 +220,10 @@ RSpec.describe Requirement do
 
   describe "#name and #option_names" do
     let(:const) { :FooRequirement }
+    # The stubbed requirement class is resolved by name at runtime.
+    # rubocop:disable Sorbet/ConstantsFromStrings
     let(:klass) { self.class.const_get(const) }
+    # rubocop:enable Sorbet/ConstantsFromStrings
 
     before do
       stub_const const.to_s, Class.new(described_class)

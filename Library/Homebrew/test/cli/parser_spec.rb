@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require_relative "../../cli/parser"
@@ -120,6 +121,58 @@ RSpec.describe Homebrew::CLI::Parser do
       expect(args.pry?).to be true
       expect(args.foo?).to be false
       expect(args.bar?).to be true
+    end
+  end
+
+  describe "ask environment variable precedence" do
+    subject(:parser) do
+      described_class.new(Cmd) do
+        switch "--no-ask", "--yes", "-y", env: :no_ask
+        switch "--ask",    env: :ask
+        conflicts "--ask", "--no-ask"
+      end
+    end
+
+    it "lets HOMEBREW_NO_ASK override default ask mode" do
+      with_env(HOMEBREW_NO_ASK: "1") do
+        expect(parser.parse([]).no_ask?).to be(true)
+      end
+    end
+
+    it "lets --ask override HOMEBREW_NO_ASK" do
+      with_env(HOMEBREW_NO_ASK: "1") do
+        args = parser.parse(["--ask"])
+        expect(args.ask?).to be(true)
+        expect(args.no_ask?).to be(false)
+      end
+    end
+
+    it "lets --no-ask, --yes and -y override default ask mode" do
+      expect(parser.parse(["--no-ask"]).no_ask?).to be(true)
+      expect(described_class.new(Cmd) do
+        switch "--no-ask", "--yes", "-y", env: :no_ask
+      end.parse(["--yes"]).no_ask?).to be(true)
+      expect(described_class.new(Cmd) do
+        switch "--no-ask", "--yes", "-y", env: :no_ask
+      end.parse(["-y"]).no_ask?).to be(true)
+    end
+  end
+
+  describe "describe environment variable precedence" do
+    subject(:parser) do
+      described_class.new(Cmd) do
+        switch "--no-describe", env: :bundle_no_describe
+        switch "--describe",    env: :bundle_describe
+        conflicts "--describe", "--no-describe"
+      end
+    end
+
+    it "lets --describe override HOMEBREW_BUNDLE_NO_DESCRIBE" do
+      with_env(HOMEBREW_BUNDLE_NO_DESCRIBE: "1") do
+        args = parser.parse(["--describe"])
+        expect(args.describe?).to be(true)
+        expect(args.no_describe?).to be(false)
+      end
     end
   end
 
@@ -348,7 +401,7 @@ RSpec.describe Homebrew::CLI::Parser do
         switch "--baz"
         switch "--bar"
       end
-      expect(parser.generate_help_text).to match(/\[options\]/)
+      expect(parser.generate_help_text).to include("[options]")
     end
 
     it "includes individual options if less than two non-global options are available" do
@@ -356,7 +409,7 @@ RSpec.describe Homebrew::CLI::Parser do
         switch "--foo"
         switch "--bar"
       end
-      expect(parser.generate_help_text).to match(/\[--foo\] \[--bar\]/)
+      expect(parser.generate_help_text).to include("[--foo] [--bar]")
     end
 
     it "formats flags correctly when less than two non-global options are available" do
@@ -364,26 +417,26 @@ RSpec.describe Homebrew::CLI::Parser do
         flag "--foo"
         flag "--bar="
       end
-      expect(parser.generate_help_text).to match(/\[--foo\] \[--bar=\]/)
+      expect(parser.generate_help_text).to include("[--foo] [--bar=]")
     end
 
     it "formats comma arrays correctly when less than two non-global options are available" do
       parser = described_class.new(Cmd) do
         comma_array "--foo"
       end
-      expect(parser.generate_help_text).to match(/\[--foo=\]/)
+      expect(parser.generate_help_text).to include("[--foo=]")
     end
 
     it "does not include hidden options" do
       parser = described_class.new(Cmd) do
         switch "--foo", hidden: true
       end
-      expect(parser.generate_help_text).not_to match(/\[--foo\]/)
+      expect(parser.generate_help_text).not_to include("[--foo]")
     end
 
     it "doesn't include `[options]` if non non-global options are available" do
       parser = described_class.new(Cmd)
-      expect(parser.generate_help_text).not_to match(/\[options\]/)
+      expect(parser.generate_help_text).not_to include("[options]")
     end
 
     it "includes a description" do
@@ -392,14 +445,14 @@ RSpec.describe Homebrew::CLI::Parser do
           This command does something
         EOS
       end
-      expect(parser.generate_help_text).to match(/This command does something/)
+      expect(parser.generate_help_text).to include("This command does something")
     end
 
     it "allows the usage banner to be overridden" do
       parser = described_class.new(Cmd) do
         usage_banner "`test` [foo] <bar>"
       end
-      expect(parser.generate_help_text).to match(/test \[foo\] bar/)
+      expect(parser.generate_help_text).to include("test [foo] bar")
     end
 
     it "allows a usage banner and a description to be overridden" do
@@ -409,8 +462,8 @@ RSpec.describe Homebrew::CLI::Parser do
           This command does something
         EOS
       end
-      expect(parser.generate_help_text).to match(/test \[foo\] bar/)
-      expect(parser.generate_help_text).to match(/This command does something/)
+      expect(parser.generate_help_text).to include("test [foo] bar")
+      expect(parser.generate_help_text).to include("This command does something")
     end
 
     it "shows the correct usage for no named argument" do
@@ -571,6 +624,235 @@ RSpec.describe Homebrew::CLI::Parser do
         named_args :command
       end
       expect { parser.parse(["--not-a-command"]) }.to raise_error(OptionParser::InvalidOption, /--not-a-command/)
+    end
+  end
+
+  describe "subcommands" do
+    def subcommand_parser
+      Homebrew::CLI::Parser.new(Cmd) do
+        usage_banner "`test` [<subcommand>]"
+        description "Test command."
+        switch "--global"
+
+        subcommand "install", default: true do
+          usage_banner <<~EOS
+            `test install`:
+            Install dependencies.
+          EOS
+          switch "--force"
+          named_args :none
+        end
+
+        subcommand "info", aliases: ["i"] do
+          usage_banner <<~EOS
+            `test info` <service>:
+            Show service information.
+          EOS
+          switch "--json"
+          named_args :service, min: 1
+        end
+      end
+    end
+
+    it "exposes subcommand metadata as named args" do
+      parser = subcommand_parser
+
+      expect(parser.named_args_type).to eq(%w[install info])
+      expect(parser.subcommands.map(&:name)).to eq(%w[install info])
+      expect(parser.subcommands.last.aliases).to eq(["i"])
+      expect(parser.subcommands.last.description).to eq("Show service information.")
+      expect(parser.subcommands.last.usage_banner).to include("`test info` <service>:")
+    end
+
+    it "combines subcommand usage banners with the main usage banner" do
+      expect(subcommand_parser.usage_banner_text).to include("`test install`:")
+      expect(subcommand_parser.usage_banner_text).to include("Show service information.")
+    end
+
+    it "generates usage-error help for the matched subcommand" do
+      help_text = subcommand_parser.generate_help_text(remaining_args: %w[info foo --force])
+
+      expect(help_text).to include("Usage: brew test info service:")
+      expect(help_text).to include("Show service information.")
+      expect(help_text).to include("--json")
+      expect(help_text).to include("--global")
+      expect(help_text).not_to include("--force")
+      expect(help_text).not_to include("Usage: brew test install")
+    end
+
+    it "generates usage-error help for the root command when no subcommand matches" do
+      help_text = subcommand_parser.generate_help_text(remaining_args: ["unknown"])
+
+      expect(help_text).to include("Usage: brew test [subcommand]")
+      expect(help_text).to include("Subcommands:")
+      expect(help_text).to include("install")
+      expect(help_text).to include("info")
+      expect(help_text).to include("--global")
+      expect(help_text).not_to include("--force")
+      expect(help_text).not_to include("--json")
+      expect(help_text).not_to include("Usage: brew test install")
+      expect(help_text).not_to include("Usage: brew test info")
+    end
+
+    it "prints root command help for the help switch" do
+      expect { subcommand_parser.parse(["--help"]) }
+        .to output(/\A(?=.*Subcommands:)(?=.*--global)(?!.*--force)(?!.*--json)(?!.*Usage: brew test install)/m)
+        .to_stdout
+        .and raise_error(SystemExit)
+    end
+
+    it "prints matched subcommand help for the help switch" do
+      expect { subcommand_parser.parse(%w[install --help]) }
+        .to output(/\A(?=.*Usage: brew test install)(?=.*--force)(?=.*--global)(?!.*--json)(?!.*Subcommands:)/m)
+        .to_stdout
+        .and raise_error(SystemExit)
+    end
+
+    it "stores the canonical subcommand name" do
+      args = subcommand_parser.parse(%w[i foo --json])
+
+      expect(args.subcommand).to eq("info")
+      expect(args.named).to eq(["foo"])
+      expect(args.json?).to be(true)
+    end
+
+    it "rejects multiple positional names when defining a subcommand" do
+      expect do
+        described_class.new(Cmd) do
+          subcommand "install", "upgrade"
+        end
+      end.to raise_error(ArgumentError, /wrong number of arguments/)
+    end
+
+    it "uses the default subcommand when one is not passed" do
+      args = subcommand_parser.parse(["--force"])
+
+      expect(args.subcommand).to eq("install")
+      expect(args.force?).to be(true)
+    end
+
+    it "validates named args for the matched subcommand" do
+      expect { subcommand_parser.parse(["info"]) }
+        .to raise_error(Homebrew::CLI::MinNamedArgumentsError, /at least 1 service argument/)
+    end
+
+    it "rejects options from other subcommands" do
+      expect { subcommand_parser.parse(%w[info foo --force]) }
+        .to raise_error(UsageError, /`info` subcommand does not accept the `--force` switch/)
+    end
+
+    it "accepts global options re-declared inside a subcommand on every subcommand", :aggregate_failures do
+      parser = lambda do
+        described_class.new(Cmd) do
+          subcommand "install", default: true do
+            switch "-v", "--verbose", description: "Print output from commands as they are run."
+            named_args :none
+          end
+
+          subcommand "cleanup" do
+            named_args :none
+          end
+        end
+      end
+
+      expect(parser.call.parse(%w[install --verbose]).verbose?).to be(true)
+      expect(parser.call.parse(%w[cleanup --verbose]).verbose?).to be(true)
+      expect(parser.call.parse(%w[cleanup -v]).verbose?).to be(true)
+    end
+
+    it "applies option constraints only for the matching subcommand", :aggregate_failures do
+      parser = lambda do
+        described_class.new(Cmd) do
+          subcommand "install", default: true do
+            switch "--cleanup"
+            switch "--zap", depends_on: "--cleanup"
+            named_args :none
+          end
+
+          subcommand "cleanup" do
+            switch "--zap"
+            named_args :none
+          end
+        end
+      end
+
+      expect { parser.call.parse(["--zap"]) }
+        .to raise_error(Homebrew::CLI::OptionConstraintError, /`--zap` cannot be passed without `--cleanup`/)
+      expect(parser.call.parse(%w[--cleanup --zap]).subcommand).to eq("install")
+      expect(parser.call.parse(%w[cleanup --zap]).subcommand).to eq("cleanup")
+    end
+
+    it "allows global options on all subcommands" do
+      args = subcommand_parser.parse(%w[info foo --global])
+
+      expect(args.subcommand).to eq("info")
+      expect(args.global?).to be(true)
+    end
+
+    it "applies implied options from subcommand aliases", :aggregate_failures do
+      parser = described_class.new(Cmd) do
+        subcommand "install", alias_options: { "upgrade" => "--upgrade" } do
+          switch "--upgrade"
+          switch "--force"
+          named_args :none
+        end
+      end
+
+      args = parser.parse(%w[upgrade --force])
+
+      expect(parser.subcommands.first.aliases).to eq(["upgrade"])
+      expect(args.subcommand).to eq("install")
+      expect(args.upgrade?).to be(true)
+      expect(args.force?).to be(true)
+    end
+
+    it "deprecates subcommands" do
+      parser = described_class.new(Cmd) do
+        subcommand "install", odeprecated: true do
+          named_args :none
+        end
+      end
+
+      expect { parser.parse(["install"]) }
+        .to raise_error(MethodDeprecatedError, /the `install` subcommand.*deprecated/)
+    end
+
+    it "disables subcommands" do
+      parser = described_class.new(Cmd) do
+        subcommand "install", odisabled: true do
+          named_args :none
+        end
+      end
+
+      expect { parser.parse(["install"]) }
+        .to raise_error(MethodDeprecatedError, /the `install` subcommand.*disabled/)
+    end
+
+    it "hides deprecated subcommands from root help" do
+      parser = described_class.new(Cmd) do
+        usage_banner "`test` [<subcommand>]"
+        subcommand "install", odeprecated: true do
+          named_args :none
+        end
+        subcommand "info" do
+          named_args :none
+        end
+      end
+
+      expect(parser.generate_help_text).to include("info")
+      expect(parser.generate_help_text).not_to include("install")
+    end
+
+    it "returns options for a specific subcommand" do
+      parser = subcommand_parser
+
+      install_options = parser.processed_options_for_subcommand("install").map { |_, long| long }
+      info_options = parser.processed_options_for_subcommand("info").map { |_, long| long }
+
+      expect(install_options).to include("--force")
+      expect(install_options).not_to include("--json")
+      expect(info_options).to include("--json")
+      expect(info_options).not_to include("--force")
     end
   end
 

@@ -1,26 +1,11 @@
 {
   "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "brew style --changed --fix"
-          },
-          {
-            "type": "command",
-            "command": "brew typecheck"
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "brew tests --changed",
+            "command": "./bin/brew lgtm",
             "timeout": 360
           }
         ]

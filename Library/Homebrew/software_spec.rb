@@ -56,6 +56,9 @@ class SoftwareSpec
   sig { returns(T::Array[CompilerFailure]) }
   attr_reader :compiler_failures
 
+  sig { returns(T::Boolean) }
+  attr_reader :depends_on_macos_set_in_block
+
   def_delegators :@resource, :stage, :fetch, :verify_download_integrity, :source_modified_time,
                  :cached_download, :clear_cache, :checksum, :mirrors, :specs, :using, :version, :mirror,
                  :downloader, :download_queue_name, :download_queue_type
@@ -82,6 +85,11 @@ class SoftwareSpec
     @deprecated_options = T.let([], T::Array[DeprecatedOption])
     @build = T.let(BuildOptions.new(Options.create(@flags), options), BuildOptions)
     @compiler_failures = T.let([], T::Array[CompilerFailure])
+    @depends_on_macos_bare_set_top_level = T.let(false, T::Boolean)
+    @depends_on_macos_version_set_top_level = T.let(false, T::Boolean)
+    @depends_on_maximum_macos_set_top_level = T.let(false, T::Boolean)
+    @depends_on_macos_set_in_block = T.let(false, T::Boolean)
+    @depends_on_linux_set_top_level = T.let(false, T::Boolean)
   end
 
   sig { override.params(other: T.any(SoftwareSpec, Downloadable)).void }
@@ -234,10 +242,92 @@ class SoftwareSpec
     @build = BuildOptions.new(Options.create(@flags), options)
   end
 
-  sig { params(spec: T.any(String, Symbol, T::Hash[T.any(String, Symbol, T::Class[Requirement]), T.untyped], T::Class[Requirement], Dependable)).void }
-  def depends_on(spec)
+  sig {
+    params(
+      spec:         T.nilable(T.any(String, Symbol,
+                                    T::Hash[T.any(String, Symbol, T::Class[Requirement]), T.untyped],
+                                    T::Class[Requirement], Dependable)),
+      set_in_block: T::Boolean,
+      spec_kwargs:  T.untyped,
+    ).void
+  }
+  def depends_on(spec = nil, set_in_block: false, **spec_kwargs)
+    spec = spec_kwargs if spec.nil? && spec_kwargs.present?
     dep = dependency_collector.add(spec)
+    record_os_requirement(dep, set_in_block:)
     add_dep_option(dep) if dep
+  end
+
+  sig { returns(T::Boolean) }
+  def depends_on_macos_set_top_level?
+    @depends_on_macos_bare_set_top_level ||
+      @depends_on_macos_version_set_top_level ||
+      @depends_on_maximum_macos_set_top_level
+  end
+
+  sig { returns(T::Boolean) }
+  def depends_on_linux_set_top_level?
+    @depends_on_linux_set_top_level
+  end
+
+  sig { params(dep: T.untyped, set_in_block: T::Boolean).void }
+  def record_os_requirement(dep, set_in_block:)
+    case dep
+    when MacOSRequirement
+      if set_in_block
+        @depends_on_macos_set_in_block = true
+        return
+      end
+
+      if @depends_on_linux_set_top_level
+        raise ArgumentError,
+              "`depends_on :linux` cannot be combined with `depends_on macos:`"
+      end
+
+      if !dep.version_specified?
+        if @depends_on_macos_bare_set_top_level
+          raise ArgumentError, "`depends_on :macos` cannot be combined with another macOS `depends_on`"
+        end
+
+        if @depends_on_macos_version_set_top_level || @depends_on_maximum_macos_set_top_level
+          odeprecated "`depends_on :macos` with `depends_on macos:`",
+                      "`depends_on :macos` with `depends_on macos:` inside an `on_macos` block"
+        end
+
+        @depends_on_macos_bare_set_top_level = true
+      elsif dep.comparator == "<="
+        if @depends_on_macos_bare_set_top_level
+          odeprecated "`depends_on :macos` with `depends_on maximum_macos:`",
+                      "`depends_on :macos` with `depends_on maximum_macos:` inside an `on_macos` block"
+        end
+
+        if @depends_on_maximum_macos_set_top_level
+          raise ArgumentError, "`depends_on maximum_macos:` cannot be combined with another macOS `depends_on`"
+        end
+
+        @depends_on_maximum_macos_set_top_level = true
+      else
+        if @depends_on_macos_bare_set_top_level
+          odeprecated "`depends_on :macos` with `depends_on macos:`",
+                      "`depends_on :macos` with `depends_on macos:` inside an `on_macos` block"
+        end
+
+        if @depends_on_macos_version_set_top_level
+          raise ArgumentError, "`depends_on macos:` cannot be combined with another macOS `depends_on`"
+        end
+
+        @depends_on_macos_version_set_top_level = true
+      end
+    when LinuxRequirement
+      return if set_in_block
+
+      if depends_on_macos_set_top_level?
+        raise ArgumentError,
+              "`depends_on :linux` cannot be combined with `depends_on macos:`"
+      end
+
+      @depends_on_linux_set_top_level = true
+    end
   end
 
   sig {
@@ -270,7 +360,7 @@ class SoftwareSpec
     dependency_collector.deps
   end
 
-  sig { returns(T::Array[Dependable]) }
+  sig { returns(T::Array[Dependency]) }
   def recursive_dependencies
     deps_f = []
     recursive_dependencies = deps.filter_map do |dep|
@@ -300,7 +390,7 @@ class SoftwareSpec
 
   sig {
     params(strip: T.any(Symbol, String), src: T.nilable(T.any(String, Symbol)),
-           block: T.nilable(T.proc.bind(Patch).void)).void
+           block: T.nilable(T.proc.bind(Resource::Patch).void)).void
   }
   def patch(strip = :p1, src = T.unsafe(nil), &block)
     p = Patch.create(strip, src, &block)

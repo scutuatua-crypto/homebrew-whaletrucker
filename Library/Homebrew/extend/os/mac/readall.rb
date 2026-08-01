@@ -14,7 +14,7 @@ module OS
 
         sig { params(tap: ::Tap, os_name: T.nilable(Symbol), arch: T.nilable(Symbol)).returns(T::Boolean) }
         def valid_casks?(tap, os_name: nil, arch: ::Hardware::CPU.type)
-          return true if os_name == :linux
+          return super if os_name == :linux
 
           current_macos_version = if os_name.is_a?(Symbol)
             MacOSVersion.from_symbol(os_name)

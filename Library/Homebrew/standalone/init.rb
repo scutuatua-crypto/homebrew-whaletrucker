@@ -20,7 +20,7 @@ else
   end
 
   # This list should match .gitignore
-  vendored_versions = ["3.4"].freeze
+  vendored_versions = ["4.0"].freeze
   vendored_versions.include?("#{ruby_major}.#{ruby_minor}")
 end.freeze
 
@@ -61,7 +61,7 @@ HOMEBREW_USING_PORTABLE_RUBY = RbConfig.ruby.include?("/vendor/portable-ruby/").
 HOMEBREW_BUNDLER_VERSION = ENV.fetch("HOMEBREW_BUNDLER_VERSION").freeze
 ENV["BUNDLER_VERSION"] = HOMEBREW_BUNDLER_VERSION
 
-require_relative "../utils/gems"
+require_relative "../utils/gem_setup"
 Homebrew.setup_gem_environment!(setup_path: false)
 
 # Install gems for Rubies we don't vendor for.

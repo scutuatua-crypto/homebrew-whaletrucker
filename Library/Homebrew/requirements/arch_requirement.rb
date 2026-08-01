@@ -5,6 +5,8 @@ require "requirement"
 
 # A requirement on a specific architecture.
 class ArchRequirement < Requirement
+  Cache = type_template { { fixed: T::Hash[String, T.untyped] } }
+
   fatal true
 
   @arch = T.let(nil, T.nilable(Symbol))

@@ -1,39 +1,28 @@
+# typed: false
 # frozen_string_literal: true
 
 if ENV["HOMEBREW_TESTS_COVERAGE"]
   require "simplecov"
   require "simplecov-cobertura"
+  SimpleCov.start
 
   formatters = [
     SimpleCov::Formatter::HTMLFormatter,
     SimpleCov::Formatter::CoberturaFormatter,
   ]
   SimpleCov.formatters = SimpleCov::Formatter::MultiFormatter.new(formatters)
-
-  # Needed for outputting coverage reporting only once for parallel_tests.
-  # Otherwise, "Coverage report generated" will get spammed for each process.
-  if ENV["TEST_ENV_NUMBER"]
-    SimpleCov.at_exit do
-      result = SimpleCov.result
-      # `SimpleCov.result` calls `ParallelTests.wait_for_other_processes_to_finish`
-      # internally for you on the last process.
-      result.format! if ParallelTests.last_process?
-    end
-  end
 end
 
 require_relative "../standalone"
 require_relative "../warnings"
+
+Warnings.ignore(/CGI library is removed from Ruby 4\.0\./) { require "cgi" }
 
 require "test-prof"
 
 Warnings.ignore :parser_syntax do
   require "rubocop"
 end
-
-# TODO: Remove this workaround once TestProf fixes their RuboCop plugin.
-# This is needed because the RuboCop RSpec plugin attempts to load TestProf's RuboCop plugin.
-require "utils/test_prof_rubocop_stub"
 
 require "rspec/github"
 require "rspec/retry"
@@ -51,14 +40,18 @@ require_relative "../global"
 require "debug" if ENV["HOMEBREW_DEBUG"]
 
 require "test/support/quiet_progress_formatter"
+require "test/support/helper/api_hashable"
 require "test/support/helper/cask"
 require "test/support/helper/files"
 require "test/support/helper/fixtures"
 require "test/support/helper/formula"
 require "test/support/helper/mktmpdir"
+require "test/support/helper/subcommand"
+require "test/support/helper/test_each"
 
 require "test/support/helper/spec/shared_context/homebrew_cask" if OS.mac?
 require "test/support/helper/spec/shared_context/integration_test"
+require "test/support/helper/spec/shared_context/trust_store"
 require "test/support/helper/spec/shared_examples/formulae_exist"
 
 TEST_DIRECTORIES = [
@@ -150,6 +143,9 @@ RSpec.configure do |config|
   config.include(Test::Helper::Fixtures)
   config.include(Test::Helper::Formula)
   config.include(Test::Helper::MkTmpDir)
+  config.include(Test::Helper::Subcommand)
+
+  config.extend(Test::Helper::TestEach)
 
   # Enable aggregate failures by default
   config.define_derived_metadata do |metadata|
@@ -170,6 +166,10 @@ RSpec.configure do |config|
 
   config.before(:each, :needs_java) do
     skip "Java is not installed." unless which("java")
+  end
+
+  config.before(:each, :needs_jq) do
+    skip "jq is not installed." unless which("jq")
   end
 
   config.before(:each, :needs_python) do
@@ -206,28 +206,63 @@ RSpec.configure do |config|
     ENV["HOMEBREW_NO_INSTALL_FROM_API"] = "1"
   end
 
-  config.before(:each, :needs_svn) do
-    svn_shim = HOMEBREW_SHIMS_PATH/"shared/svn"
-    skip "Subversion is not installed." unless quiet_system svn_shim, "--version"
+  svn_path_dirs = nil
+  svn_skip_reason = nil
+  svn_client_path_dirs = nil
+  svn_client_skip_reason = nil
 
-    svn_shim_path = Pathname(Utils.popen_read(svn_shim, "--homebrew=print-path").chomp.presence)
+  config.define_derived_metadata(:needs_svnadmin) do |metadata|
+    metadata[:needs_svn] = true
+  end
+
+  config.before(:each, :needs_svn) do
+    skip svn_client_skip_reason if svn_client_skip_reason
+    if svn_client_path_dirs
+      ENV["PATH"] = PATH.new(ENV.fetch("PATH")).append(svn_client_path_dirs)
+      next
+    end
+
     svn_paths = PATH.new(ENV.fetch("PATH"))
-    svn_paths.prepend(svn_shim_path.dirname)
 
     if OS.mac?
       xcrun_svn = Utils.popen_read("xcrun", "-f", "svn")
       svn_paths.append(File.dirname(xcrun_svn)) if $CHILD_STATUS.success? && xcrun_svn.present?
     end
 
+    svn_shim = HOMEBREW_SHIMS_PATH/"shared/svn"
+    unless quiet_system svn_shim, "--version"
+      svn_client_skip_reason = "Subversion is not installed."
+      skip svn_client_skip_reason
+    end
+
+    svn_shim_path = Pathname(Utils.popen_read(svn_shim, "--homebrew=print-path").chomp.presence)
+    svn_paths.prepend(svn_shim_path.dirname)
+
     svn = which("svn", svn_paths)
-    skip "svn is not installed." unless svn
+    unless svn
+      svn_client_skip_reason = "svn is not installed."
+      skip svn_client_skip_reason
+    end
 
-    svnadmin = which("svnadmin", svn_paths)
-    skip "svnadmin is not installed." unless svnadmin
+    svn_client_path_dirs = [svn.dirname]
+    ENV["PATH"] = PATH.new(ENV.fetch("PATH")).append(svn_client_path_dirs)
+  end
 
-    ENV["PATH"] = PATH.new(ENV.fetch("PATH"))
-                      .append(svn.dirname)
-                      .append(svnadmin.dirname)
+  config.before(:each, :needs_svnadmin) do
+    skip svn_skip_reason if svn_skip_reason
+    if svn_path_dirs
+      ENV["PATH"] = PATH.new(ENV.fetch("PATH")).append(svn_path_dirs)
+      next
+    end
+
+    svnadmin = which("svnadmin")
+    unless svnadmin
+      svn_skip_reason = "svnadmin is not installed."
+      skip svn_skip_reason
+    end
+
+    svn_path_dirs = [svnadmin.dirname]
+    ENV["PATH"] = PATH.new(ENV.fetch("PATH")).append(svn_path_dirs)
   end
 
   config.before(:each, :needs_homebrew_curl) do
@@ -246,9 +281,9 @@ RSpec.configure do |config|
 
     Tap.installed.each(&:clear_cache)
     Cachable::Registry.clear_all_caches
-    FormulaInstaller.clear_attempted
-    FormulaInstaller.clear_installed
-    FormulaInstaller.clear_fetched
+    FormulaInstaller.attempted.clear
+    FormulaInstaller.installed.clear
+    FormulaInstaller.fetched.clear
     Utils::Curl.clear_path_cache
 
     TEST_DIRECTORIES.each(&:mkpath)
@@ -264,8 +299,45 @@ RSpec.configure do |config|
     @__stdin = $stdin.clone
 
     # Link original API cache files to test cache directory.
-    Pathname("#{ENV.fetch("HOMEBREW_CACHE")}/api").glob("*.json").each do |path|
-      FileUtils.ln_s path, HOMEBREW_CACHE/"api/#{path.basename}"
+    source_api_cache = Pathname("#{ENV.fetch("HOMEBREW_CACHE")}/api")
+
+    source_api_cache.glob("*.json").each do |path|
+      target = HOMEBREW_CACHE/"api/#{path.basename}"
+      FileUtils.ln_s path, target unless target.exist?
+    end
+    source_api_cache.glob("*.txt").each do |path|
+      target = HOMEBREW_CACHE/"api/#{path.basename}"
+      FileUtils.cp path, target unless target.exist?
+    end
+
+    source_api_internal_cache = source_api_cache/"internal"
+    target_api_internal_cache = HOMEBREW_CACHE/"api/internal"
+    target_api_internal_cache.mkpath
+
+    # The real cache can hold package API files for multiple OS tags. Fan out
+    # from one source so generated test-cache aliases do not collide.
+    package_paths = source_api_internal_cache.glob("packages.*.jws.json")
+    package_path = package_paths.find do |path|
+      path.basename.to_s == "packages.#{Homebrew::SimulateSystem.current_tag}.jws.json"
+    end || package_paths.first
+
+    source_api_internal_cache.glob("*.{json,txt}").each do |path|
+      next if path.basename.to_s.start_with?("packages.")
+
+      target = target_api_internal_cache/path.basename
+      next if target.exist?
+
+      (path.extname == ".txt") ? FileUtils.cp(path, target) : FileUtils.ln(path, target)
+    end
+
+    if package_path
+      [:generic, :linux, :macos, *MacOSVersion::SYMBOLS.keys].product([:arm, :intel]).each do |system, arch|
+        tag = Utils::Bottles::Tag.new(system:, arch:)
+        next unless tag.valid_combination?
+
+        target = target_api_internal_cache/"packages.#{tag}.jws.json"
+        FileUtils.ln package_path, target unless target.exist?
+      end
     end
 
     begin
@@ -290,6 +362,7 @@ RSpec.configure do |config|
       example.example.set_exception(e)
     ensure
       ENV.replace(@__env)
+      Homebrew::SimulateSystem.clear
       Context.current = Context::ContextStruct.new
 
       $stdout.reopen(@__stdout)
@@ -302,11 +375,22 @@ RSpec.configure do |config|
       Tap.all.each(&:clear_cache)
       Cachable::Registry.clear_all_caches
 
+      # Refuse to clean a config home outside the sandboxed `HOME`, else this deletes the user's
+      # real `~/.homebrew/trust.json`; canonicalise first so `..`/symlinks can't slip past.
+      home = Pathname(Dir.home).realpath
+      user_config_home = Pathname(ENV.fetch("HOMEBREW_USER_CONFIG_HOME")).expand_path
+      resolved_ancestor = user_config_home.ascend.find(&:exist?)&.realpath
+      unless resolved_ancestor&.ascend&.include?(home)
+        raise "HOMEBREW_USER_CONFIG_HOME (#{user_config_home}) is not sandboxed under HOME (#{Dir.home})"
+      end
+
       FileUtils.rm_rf [
         *TEST_DIRECTORIES,
         *Keg.must_exist_subdirectories,
         HOMEBREW_LINKED_KEGS,
         HOMEBREW_PINNED_KEGS,
+        HOMEBREW_PINNED_CASKS,
+        user_config_home/"trust.json",
         HOMEBREW_PREFIX/"Caskroom",
         HOMEBREW_PREFIX/"Frameworks",
         HOMEBREW_LIBRARY/"Taps/homebrew/homebrew-cask",

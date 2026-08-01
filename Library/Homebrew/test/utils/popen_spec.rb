@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "utils/popen"
@@ -86,9 +87,9 @@ RSpec.describe Utils do
 
   describe "::safe_popen_write" do
     it "does not raise an error if the command succeeds" do
-      expect(
-        described_class.safe_popen_write("grep", "success") { |pipe| pipe.write "success\n" }.chomp,
-      ).to eq("success")
+      expect do
+        described_class.safe_popen_write("grep", "success") { |pipe| pipe.write "success\n" }
+      end.not_to raise_error
       expect($CHILD_STATUS).to be_a_success
     end
 

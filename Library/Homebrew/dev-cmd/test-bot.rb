@@ -65,8 +65,10 @@ module Homebrew
                description: "Don't test any dependents."
         switch "--skip-livecheck",
                description: "Don't test livecheck."
-        switch "--skip-recursive-dependents",
-               description: "Only test the direct dependents."
+        switch "--[no-]skip-recursive-dependents",
+               description: "Only test the direct dependents (default: enabled).",
+               replacement: "the default behaviour",
+               odeprecated: true
         switch "--skip-checksum-only-audit",
                description: "Don't audit checksum-only changes."
         switch "--skip-stable-version-audit",
@@ -106,6 +108,9 @@ module Homebrew
                                  "formulae dependents step."
         comma_array "--tested-formulae=",
                     description: "Use these tested formulae from formulae steps for a formulae dependents step."
+        flag   "--formulae-dependents-shard=",
+               description: "Only test the formulae dependents in the given <SHARD/TOTAL>.",
+               hidden:      true
         conflicts "--only-formulae-detect", "--testing-formulae"
         conflicts "--only-formulae-detect", "--added-formulae"
         conflicts "--only-formulae-detect", "--deleted-formulae"
@@ -122,6 +127,16 @@ module Homebrew
           ENV["HOMEBREW_GITHUB_ACTIONS"] = "1"
         end
         ENV["HOMEBREW_TEST_BOT"] = "1"
+
+        Homebrew.install_bundler_gems!(groups: ["ast"]) if args.only_formulae? || [
+          args.only_cleanup_before?,
+          args.only_setup?,
+          args.only_tap_syntax?,
+          args.only_formulae_detect?,
+          args.only_formulae_dependents?,
+          args.only_bottles_fetch?,
+          args.only_cleanup_after?,
+        ].none?
 
         TestBot.run!(args)
       end

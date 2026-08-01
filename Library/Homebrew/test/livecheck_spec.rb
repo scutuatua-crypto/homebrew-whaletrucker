@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "formula"
@@ -6,6 +7,7 @@ require "livecheck"
 RSpec.describe Livecheck do
   let(:f) do
     formula do
+      T.bind(self, T.class_of(Formula))
       homepage "https://brew.sh"
       url "https://brew.sh/test-0.0.1.tgz"
       head "https://github.com/Homebrew/brew.git", branch: "main"
@@ -45,12 +47,6 @@ RSpec.describe Livecheck do
       livecheck_f.formula("other-formula")
       expect(livecheck_f.formula).to eq("other-formula")
     end
-
-    it "raises a TypeError if the argument isn't a String" do
-      expect do
-        livecheck_f.formula(123)
-      end.to raise_error TypeError
-    end
   end
 
   describe "#cask" do
@@ -78,14 +74,14 @@ RSpec.describe Livecheck do
   describe "#skip" do
     it "sets @skip to true when no argument is provided" do
       expect(livecheck_f.skip).to be true
-      expect(livecheck_f.instance_variable_get(:@skip)).to be true
-      expect(livecheck_f.instance_variable_get(:@skip_msg)).to be_nil
+      expect(livecheck_f.skip?).to be true
+      expect(livecheck_f.skip_msg).to be_nil
     end
 
     it "sets @skip to true and @skip_msg to the provided String" do
       expect(livecheck_f.skip("foo")).to be true
-      expect(livecheck_f.instance_variable_get(:@skip)).to be true
-      expect(livecheck_f.instance_variable_get(:@skip_msg)).to eq("foo")
+      expect(livecheck_f.skip?).to be true
+      expect(livecheck_f.skip_msg).to eq("foo")
     end
   end
 
@@ -130,6 +126,11 @@ RSpec.describe Livecheck do
       livecheck_f.throttle(10)
       expect(livecheck_f.throttle).to eq(10)
     end
+
+    it "sets @throttle_days to provided Integer" do
+      livecheck_f.throttle(days: 1)
+      expect(livecheck_f.throttle_days).to eq(1)
+    end
   end
 
   describe "#url" do
@@ -160,6 +161,9 @@ RSpec.describe Livecheck do
     end
 
     it "sets `url` options when provided" do
+      cookies = { "cookie_key" => "cookie_value" }
+      header_str = "Accept: */*"
+
       # This test makes sure that we can set multiple options at once and
       # options from subsequent `url` calls are merged with existing values
       # (i.e. existing values aren't reset to `nil`). [We only call `url` once
@@ -167,14 +171,18 @@ RSpec.describe Livecheck do
       # implemented.]
       livecheck_f.url(
         url_string,
-        cookies:       { "cookie_key" => "cookie_value" },
-        header:        "Accept: */*",
+        compressed:    false,
+        cookies:,
+        header:        header_str,
         homebrew_curl: true,
         post_form:     post_hash,
         referer:       referer_url,
         user_agent:    :browser,
       )
       livecheck_f.url(url_string, post_json: post_hash)
+      expect(livecheck_f.options.compressed).to be(false)
+      expect(livecheck_f.options.cookies).to eq(cookies)
+      expect(livecheck_f.options.header).to eq(header_str)
       expect(livecheck_f.options.homebrew_curl).to be(true)
       expect(livecheck_f.options.post_form).to eq(post_hash)
       expect(livecheck_f.options.post_json).to eq(post_hash)
@@ -192,6 +200,18 @@ RSpec.describe Livecheck do
     it "raises an ArgumentError if the argument isn't a valid Symbol" do
       expect do
         livecheck_f.url(:not_a_valid_symbol)
+      end.to raise_error ArgumentError
+    end
+
+    it "raises an ArgumentError if `compressed: true` argument is provided" do
+      expect do
+        livecheck_f.url(:stable, compressed: true)
+      end.to raise_error ArgumentError
+    end
+
+    it "raises an ArgumentError if `homebrew_curl: false` argument is provided" do
+      expect do
+        livecheck_f.url(:stable, homebrew_curl: false)
       end.to raise_error ArgumentError
     end
 
@@ -220,10 +240,10 @@ RSpec.describe Livecheck do
       end
     end
 
-    {
+    test_each_hash({
       needs_arm:   "arm",
       needs_intel: "intel",
-    }.each do |metadata, expected_arch|
+    }) do |metadata, expected_arch|
       it "delegates `arch` in `livecheck` block to `package_or_resource`", metadata do
         expect(c_arch.livecheck.url).to eq("https://brew.sh/#{expected_arch}")
       end
@@ -248,10 +268,10 @@ RSpec.describe Livecheck do
       end
     end
 
-    {
+    test_each_hash({
       needs_macos: "macos",
       needs_linux: "linux",
-    }.each do |metadata, expected_os|
+    }) do |metadata, expected_os|
       it "delegates `os` in `livecheck` block to `package_or_resource`", metadata do
         expect(c_os.livecheck.url).to eq("https://brew.sh/#{expected_os}")
       end
@@ -263,6 +283,7 @@ RSpec.describe Livecheck do
 
     let(:f_version) do
       formula do
+        T.bind(self, T.class_of(Formula))
         homepage "https://brew.sh"
         url "https://brew.sh/test-0.0.1.tgz"
 
@@ -308,15 +329,16 @@ RSpec.describe Livecheck do
     it "returns a Hash of all instance variables" do
       expect(livecheck_f.to_hash).to eq(
         {
-          "options"  => Homebrew::Livecheck::Options.new.to_hash,
-          "cask"     => nil,
-          "formula"  => nil,
-          "regex"    => nil,
-          "skip"     => false,
-          "skip_msg" => nil,
-          "strategy" => nil,
-          "throttle" => nil,
-          "url"      => nil,
+          "options"       => Homebrew::Livecheck::Options.new.to_hash,
+          "cask"          => nil,
+          "formula"       => nil,
+          "regex"         => nil,
+          "skip"          => false,
+          "skip_msg"      => nil,
+          "strategy"      => nil,
+          "throttle"      => nil,
+          "throttle_days" => nil,
+          "url"           => nil,
         },
       )
     end

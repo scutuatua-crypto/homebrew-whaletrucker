@@ -1,8 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require "uri"
 require "source_location"
-require "utils/curl"
 
 module Cask
   # Class corresponding to the `url` stanza.
@@ -19,7 +19,7 @@ module Cask
     sig { returns(T.nilable(T::Hash[String, String])) }
     attr_reader :cookies, :data
 
-    sig { returns(T.nilable(T.any(String, T::Array[String]))) }
+    sig { returns(T.nilable(T::Array[String])) }
     attr_reader :header
 
     sig { returns(T.nilable(T.any(URI::Generic, String))) }
@@ -35,7 +35,7 @@ module Cask
     attr_reader :using
 
     sig { returns(T.nilable(String)) }
-    attr_reader :tag, :branch, :revision, :only_path, :verified
+    attr_reader :tag, :branch, :revision, :only_path
 
     extend Forwardable
 
@@ -73,7 +73,6 @@ module Cask
       header = Array(header) unless header.nil?
 
       specs = {}
-      specs[:verified]   = @verified   = T.let(verified, T.nilable(String))
       specs[:using]      = @using      = T.let(using, T.nilable(T.any(T::Class[AbstractDownloadStrategy], Symbol)))
       specs[:tag]        = @tag        = T.let(tag, T.nilable(String))
       specs[:branch]     = @branch     = T.let(branch, T.nilable(String))
@@ -83,7 +82,7 @@ module Cask
       specs[:cookies]    =
         @cookies = T.let(cookies&.transform_keys(&:to_s), T.nilable(T::Hash[String, String]))
       specs[:referer]    = @referer    = T.let(referer, T.nilable(T.any(URI::Generic, String)))
-      specs[:headers]    = @header     = T.let(header, T.nilable(T.any(String, T::Array[String])))
+      specs[:headers]    = @header     = T.let(header, T.nilable(T::Array[String]))
       specs[:user_agent] = @user_agent = T.let(user_agent || :default, T.nilable(T.any(Symbol, String)))
       specs[:data]       = @data       = T.let(data, T.nilable(T::Hash[String, String]))
       specs[:only_path]  = @only_path  = T.let(only_path, T.nilable(String))

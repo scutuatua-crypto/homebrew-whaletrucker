@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "dependency"
@@ -25,10 +26,6 @@ RSpec.describe Dependency do
       dep = described_class.new("foo", [:build, "bar"])
       expect(dep.tags).to eq([:build, "bar"])
     end
-
-    it "rejects nil names" do
-      expect { described_class.new(nil) }.to raise_error(ArgumentError)
-    end
   end
 
   describe "::merge_repeats" do
@@ -40,10 +37,10 @@ RSpec.describe Dependency do
       expect(merged.count).to eq(2)
       expect(merged.first).to be_a described_class
 
-      foo_named_dep = merged.find { |d| d.name == "foo" }
+      foo_named_dep = T.must(merged.find { |d| d.name == "foo" })
       expect(foo_named_dep.tags).to eq(["bar"])
 
-      xyz_named_dep = merged.find { |d| d.name == "xyz" }
+      xyz_named_dep = T.must(merged.find { |d| d.name == "xyz" })
       expect(xyz_named_dep.tags).to eq(["abc"])
     end
 
@@ -94,6 +91,11 @@ RSpec.describe Dependency do
     foo3 = described_class.new("foo", [:build])
     expect(foo1).not_to eq(foo3)
     expect(foo1).not_to eql(foo3)
+
+    uses_from_macos_ventura = UsesFromMacOSDependency.new("foo", [], bounds: { since: :ventura })
+    uses_from_macos_sonoma = UsesFromMacOSDependency.new("foo", [], bounds: { since: :sonoma })
+    expect(uses_from_macos_ventura).not_to eq(uses_from_macos_sonoma)
+    expect(uses_from_macos_ventura).not_to eql(uses_from_macos_sonoma)
   end
 
   describe "#tap" do

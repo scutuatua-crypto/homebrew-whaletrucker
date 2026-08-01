@@ -1,6 +1,8 @@
+# typed: true
 # frozen_string_literal: true
 
 require "utils/pypi"
+require "formulary"
 
 RSpec.describe PyPI do
   let(:pypi_package_url) do
@@ -30,51 +32,18 @@ RSpec.describe PyPI do
     let(:other_package) { described_class.new("virtualenv==20.2.0") }
 
     describe "initialize" do
-      it "initializes name" do
+      specify do
         expect(described_class.new("foo").name).to eq "foo"
-      end
-
-      it "initializes name with extra" do # rubocop:todo RSpec/AggregateExamples
         expect(described_class.new("foo[bar]").name).to eq "foo"
-      end
-
-      it "initializes extra" do # rubocop:todo RSpec/AggregateExamples
         expect(described_class.new("foo[bar]").extras).to eq ["bar"]
-      end
-
-      it "initializes multiple extras" do # rubocop:todo RSpec/AggregateExamples
         expect(described_class.new("foo[bar,baz]").extras).to eq ["bar", "baz"]
-      end
-
-      it "initializes name with version" do # rubocop:todo RSpec/AggregateExamples
         expect(described_class.new("foo==1.2.3").name).to eq "foo"
-      end
-
-      it "initializes version" do # rubocop:todo RSpec/AggregateExamples
         expect(described_class.new("foo==1.2.3").version).to eq "1.2.3"
-      end
-
-      it "initializes extra with version" do # rubocop:todo RSpec/AggregateExamples
         expect(described_class.new("foo[bar]==1.2.3").extras).to eq ["bar"]
-      end
-
-      it "initializes multiple extras with version" do # rubocop:todo RSpec/AggregateExamples
         expect(described_class.new("foo[bar,baz]==1.2.3").extras).to eq ["bar", "baz"]
-      end
-
-      it "initializes version with extra" do # rubocop:todo RSpec/AggregateExamples
         expect(described_class.new("foo[bar]==1.2.3").version).to eq "1.2.3"
-      end
-
-      it "initializes version with multiple extras" do # rubocop:todo RSpec/AggregateExamples
         expect(described_class.new("foo[bar,baz]==1.2.3").version).to eq "1.2.3"
-      end
-
-      it "initializes name from PyPI url" do # rubocop:todo RSpec/AggregateExamples
         expect(described_class.new(pypi_package_url, is_url: true).name).to eq "snakemake"
-      end
-
-      it "initializes version from PyPI url" do # rubocop:todo RSpec/AggregateExamples
         expect(described_class.new(pypi_package_url, is_url: true).version).to eq "5.29.0"
       end
     end
@@ -104,36 +73,25 @@ RSpec.describe PyPI do
     end
 
     describe ".valid_pypi_package?" do
-      it "is true for package names" do
+      specify do
         expect(package.valid_pypi_package?).to be true
-      end
-
-      it "is true for PyPI URLs" do # rubocop:todo RSpec/AggregateExamples
         expect(package_from_pypi_url.valid_pypi_package?).to be true
-      end
-
-      it "is false for non-PyPI URLs" do # rubocop:todo RSpec/AggregateExamples
         expect(package_from_non_pypi_url.valid_pypi_package?).to be false
       end
     end
 
     describe ".pypi_info", :needs_network do
-      it "gets pypi info from a package name" do
+      specify do
         expect(package.pypi_info.first).to eq "snakemake"
+        expect(package_with_extra.pypi_info.first).to eq "snakemake"
+        expect(package_with_version.pypi_info).to eq ["snakemake", old_pypi_package_url, old_package_checksum,
+                                                      "5.28.0"]
+        expect(package_from_pypi_url.pypi_info).to eq ["snakemake", pypi_package_url, package_checksum, "5.29.0"]
       end
 
       it "gets pypi info from a package name and specified version" do
         expect(package.pypi_info(new_version: "5.29.0")).to eq ["snakemake", pypi_package_url, package_checksum,
                                                                 "5.29.0"]
-      end
-
-      it "gets pypi info from a package name with extra" do # rubocop:todo RSpec/AggregateExamples
-        expect(package_with_extra.pypi_info.first).to eq "snakemake"
-      end
-
-      it "gets pypi info from a package name and version" do # rubocop:todo RSpec/AggregateExamples
-        expect(package_with_version.pypi_info).to eq ["snakemake", old_pypi_package_url, old_package_checksum,
-                                                      "5.28.0"]
       end
 
       it "gets pypi info from a package name with overridden version" do
@@ -146,10 +104,6 @@ RSpec.describe PyPI do
         expect(package_with_extra_and_version.pypi_info).to eq expected_result
       end
 
-      it "gets pypi info from a url" do # rubocop:todo RSpec/AggregateExamples
-        expect(package_from_pypi_url.pypi_info).to eq ["snakemake", pypi_package_url, package_checksum, "5.29.0"]
-      end
-
       it "gets pypi info from a url with overridden version" do
         expected_result = ["snakemake", old_pypi_package_url, old_package_checksum, "5.28.0"]
         expect(package_from_pypi_url.pypi_info(new_version: "5.28.0")).to eq expected_result
@@ -157,23 +111,11 @@ RSpec.describe PyPI do
     end
 
     describe ".to_s" do
-      it "returns string representation of package name" do
+      specify do
         expect(package.to_s).to eq "snakemake"
-      end
-
-      it "returns string representation of package with version" do # rubocop:todo RSpec/AggregateExamples
         expect(package_with_version.to_s).to eq "snakemake==5.28.0"
-      end
-
-      it "returns string representation of package with extra" do # rubocop:todo RSpec/AggregateExamples
         expect(package_with_extra.to_s).to eq "snakemake[foo]"
-      end
-
-      it "returns string representation of package with extra and version" do # rubocop:todo RSpec/AggregateExamples
         expect(package_with_extra_and_version.to_s).to eq "snakemake[foo]==5.28.0"
-      end
-
-      it "returns string representation of package from url" do # rubocop:todo RSpec/AggregateExamples
         expect(package_from_pypi_url.to_s).to eq "snakemake==5.29.0"
       end
     end
@@ -208,6 +150,178 @@ RSpec.describe PyPI do
       it "returns 1" do
         expect(other_package <=> package_with_extra_and_version).to eq 1
       end
+    end
+  end
+
+  describe ".pip_report" do
+    it "filters packages uploaded within the last day" do
+      `true`
+
+      expect(Utils).to receive(:popen_read).with(
+        { "PIP_REQUIRE_VIRTUALENV" => "false" },
+        Utils::Path.formula_opt_libexec("python")/"bin/python", "-m", "pip", "install", "-q",
+        "--disable-pip-version-check", "--dry-run", "--ignore-installed",
+        "--uploaded-prior-to=P1D", "--report=/dev/stdout", "snakemake"
+      ).and_return('{"install":[]}')
+
+      expect(described_class.pip_report([PyPI::Package.new("snakemake")])).to eq([])
+    end
+
+    it "passes the ignored-cooldown package to pip by its direct URL" do
+      `true`
+
+      main = PyPI::Package.new("snakemake==5.29.0")
+      dependency = PyPI::Package.new("pyyaml==6.0")
+      sdist_url = "https://files.pythonhosted.org/packages/snakemake-5.29.0.tar.gz"
+      allow(main).to receive(:pypi_info).and_return(["snakemake", sdist_url, "a" * 64, "5.29.0"])
+
+      expect(Utils).to receive(:popen_read).with(
+        { "PIP_REQUIRE_VIRTUALENV" => "false" },
+        Utils::Path.formula_opt_libexec("python")/"bin/python", "-m", "pip", "install", "-q",
+        "--disable-pip-version-check", "--dry-run", "--ignore-installed",
+        "--uploaded-prior-to=P1D", "--report=/dev/stdout",
+        sdist_url, "pyyaml==6.0"
+      ).and_return('{"install":[]}')
+
+      expect(described_class.pip_report([main, dependency], ignore_cooldown_package: main)).to eq([])
+    end
+
+    it "preserves extras on the ignored-cooldown package's direct URL" do
+      `true`
+
+      main = PyPI::Package.new("snakemake[foo]==5.29.0")
+      sdist_url = "https://files.pythonhosted.org/packages/snakemake-5.29.0.tar.gz"
+      allow(main).to receive(:pypi_info).and_return(["snakemake", sdist_url, "a" * 64, "5.29.0"])
+
+      expect(Utils).to receive(:popen_read).with(
+        { "PIP_REQUIRE_VIRTUALENV" => "false" },
+        Utils::Path.formula_opt_libexec("python")/"bin/python", "-m", "pip", "install", "-q",
+        "--disable-pip-version-check", "--dry-run", "--ignore-installed",
+        "--uploaded-prior-to=P1D", "--report=/dev/stdout",
+        "snakemake[foo] @ #{sdist_url}"
+      ).and_return('{"install":[]}')
+
+      expect(described_class.pip_report([main], ignore_cooldown_package: main)).to eq([])
+    end
+
+    it "keeps the ignored-cooldown package cooled when its sdist URL is unavailable" do
+      `true`
+
+      main = PyPI::Package.new("snakemake==5.29.0")
+      allow(main).to receive(:pypi_info).and_return(nil)
+
+      expect(Utils).to receive(:popen_read).with(
+        { "PIP_REQUIRE_VIRTUALENV" => "false" },
+        Utils::Path.formula_opt_libexec("python")/"bin/python", "-m", "pip", "install", "-q",
+        "--disable-pip-version-check", "--dry-run", "--ignore-installed",
+        "--uploaded-prior-to=P1D", "--report=/dev/stdout",
+        "snakemake==5.29.0"
+      ).and_return('{"install":[]}')
+
+      expect(described_class.pip_report([main], ignore_cooldown_package: main)).to eq([])
+    end
+  end
+
+  describe ".update_python_resources!" do
+    it "keeps resources with livecheck blocks" do
+      path = mktmpdir/"foo.rb"
+      livecheck_resource = <<~RUBY
+        resource "aws-lambda-rie" do
+          url "https://github.com/aws/aws-lambda-runtime-interface-emulator/archive/refs/tags/v1.0.tar.gz"
+          sha256 "#{"c" * 64}"
+
+          livecheck do
+            url "https://github.com/aws/aws-lambda-runtime-interface-emulator/releases"
+            regex(/^v?(\\d+(?:\\.\\d+)+)$/i)
+          end
+        end
+      RUBY
+      contents = <<~RUBY
+        class Foo < Formula
+          url "https://files.pythonhosted.org/packages/foo-1.0.tar.gz"
+          sha256 "#{"a" * 64}"
+
+          resource "bar" do
+            url "https://files.pythonhosted.org/packages/bar-0.9.tar.gz"
+            sha256 "#{"b" * 64}"
+          end
+
+        #{livecheck_resource}
+
+          def install
+            bin.install "foo"
+          end
+        end
+      RUBY
+      path.write(contents)
+      package = PyPI::Package.new("bar==1.0")
+      livecheck_package = PyPI::Package.new("aws-lambda-rie==1.0")
+
+      allow(Formula).to receive(:[]).with("python").and_return(instance_double(Formula, ensure_installed!: true))
+      allow(described_class).to receive(:pip_report)
+        .and_return([PyPI::Package.new("foo==1.0"), package, livecheck_package])
+      allow(package).to receive(:pypi_info).and_return(
+        ["bar", "https://files.pythonhosted.org/packages/bar-1.0.tar.gz", "d" * 64, "1.0", nil],
+      )
+      expect(livecheck_package).not_to receive(:pypi_info)
+
+      described_class.update_python_resources!(Formulary.from_contents("foo", path, contents),
+                                               package_name: "foo", quiet: true)
+
+      expect(path.read).to eq <<~RUBY
+        class Foo < Formula
+          url "https://files.pythonhosted.org/packages/foo-1.0.tar.gz"
+          sha256 "#{"a" * 64}"
+
+          resource "bar" do
+            url "https://files.pythonhosted.org/packages/bar-1.0.tar.gz"
+            sha256 "#{"d" * 64}"
+          end
+
+        #{livecheck_resource}
+
+          def install
+            bin.install "foo"
+          end
+        end
+      RUBY
+    end
+
+    it "exempts the main package from the cooldown when requested" do
+      path = mktmpdir/"foo.rb"
+      contents = <<~RUBY
+        class Foo < Formula
+          url "https://files.pythonhosted.org/packages/foo-1.0.tar.gz"
+          sha256 "#{"a" * 64}"
+
+          resource "bar" do
+            url "https://files.pythonhosted.org/packages/bar-0.9.tar.gz"
+            sha256 "#{"b" * 64}"
+          end
+
+          def install
+            bin.install "foo"
+          end
+        end
+      RUBY
+      path.write(contents)
+      bar = PyPI::Package.new("bar==1.0")
+
+      allow(Formula).to receive(:[]).with("python").and_return(instance_double(Formula, ensure_installed!: true))
+      allow(bar).to receive(:pypi_info).and_return(
+        ["bar", "https://files.pythonhosted.org/packages/bar-1.0.tar.gz", "d" * 64, "1.0", nil],
+      )
+      exempted = T.let(nil, T.nilable(PyPI::Package))
+      allow(described_class).to receive(:pip_report) do |_packages, **kwargs|
+        exempted = kwargs[:ignore_cooldown_package] if kwargs.key?(:ignore_cooldown_package)
+        [PyPI::Package.new("foo==1.0"), bar]
+      end
+
+      described_class.update_python_resources!(Formulary.from_contents("foo", path, contents),
+                                               package_name: "foo", quiet: true,
+                                               ignore_main_package_cooldown: true)
+
+      expect(exempted&.name).to eq "foo"
     end
   end
 

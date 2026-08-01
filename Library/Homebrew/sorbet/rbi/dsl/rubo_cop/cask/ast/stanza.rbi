@@ -13,6 +13,9 @@ class RuboCop::Cask::AST::Stanza
   def appcast?; end
 
   sig { returns(T::Boolean) }
+  def appimage?; end
+
+  sig { returns(T::Boolean) }
   def arch?; end
 
   sig { params(args: T.untyped, block: T.untyped).returns(T::Boolean) }
@@ -40,6 +43,9 @@ class RuboCop::Cask::AST::Stanza
   def colorpicker?; end
 
   sig { returns(T::Boolean) }
+  def command_wrapper?; end
+
+  sig { returns(T::Boolean) }
   def conflicts_with?; end
 
   sig { returns(T::Boolean) }
@@ -59,6 +65,12 @@ class RuboCop::Cask::AST::Stanza
 
   sig { returns(T::Boolean) }
   def font?; end
+
+  sig { returns(T::Boolean) }
+  def generate_completions_from_executable?; end
+
+  sig { returns(T::Boolean) }
+  def generated_script?; end
 
   sig { returns(T::Boolean) }
   def homepage?; end
@@ -103,7 +115,16 @@ class RuboCop::Cask::AST::Stanza
   def on_catalina?; end
 
   sig { returns(T::Boolean) }
+  def on_golden_gate?; end
+
+  sig { returns(T::Boolean) }
   def on_intel?; end
+
+  sig { returns(T::Boolean) }
+  def on_linux?; end
+
+  sig { returns(T::Boolean) }
+  def on_macos?; end
 
   sig { returns(T::Boolean) }
   def on_monterey?; end
@@ -116,6 +137,9 @@ class RuboCop::Cask::AST::Stanza
 
   sig { params(args: T.untyped, block: T.untyped).returns(T::Boolean) }
   def on_system_block?(*args, &block); end
+
+  sig { returns(T::Boolean) }
+  def on_system_conditional?; end
 
   sig { returns(T::Boolean) }
   def on_tahoe?; end
@@ -136,7 +160,13 @@ class RuboCop::Cask::AST::Stanza
   def postflight?; end
 
   sig { returns(T::Boolean) }
+  def postflight_steps?; end
+
+  sig { returns(T::Boolean) }
   def preflight?; end
+
+  sig { returns(T::Boolean) }
+  def preflight_steps?; end
 
   sig { returns(T::Boolean) }
   def prefpane?; end
@@ -168,6 +198,9 @@ class RuboCop::Cask::AST::Stanza
   sig { returns(T::Boolean) }
   def suite?; end
 
+  sig { params(args: T.untyped, block: T.untyped).returns(T::Boolean) }
+  def system_variable?(*args, &block); end
+
   sig { returns(T::Boolean) }
   def uninstall?; end
 
@@ -175,7 +208,13 @@ class RuboCop::Cask::AST::Stanza
   def uninstall_postflight?; end
 
   sig { returns(T::Boolean) }
+  def uninstall_postflight_steps?; end
+
+  sig { returns(T::Boolean) }
   def uninstall_preflight?; end
+
+  sig { returns(T::Boolean) }
+  def uninstall_preflight_steps?; end
 
   sig { returns(T::Boolean) }
   def url?; end

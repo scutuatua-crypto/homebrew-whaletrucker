@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "rubocops/uses_from_macos"
@@ -48,5 +49,5 @@ RSpec.describe RuboCop::Cop::FormulaAudit::UsesFromMacos do
     end
   end
 
-  include_examples "formulae exist", described_class::ALLOWED_USES_FROM_MACOS_DEPS
+  include_examples "formulae exist", RuboCop::Cop::FormulaAudit::UsesFromMacos::ALLOWED_USES_FROM_MACOS_DEPS
 end

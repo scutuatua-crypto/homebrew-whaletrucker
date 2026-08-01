@@ -26,9 +26,19 @@ module Homebrew
           names.uniq.map { |a| Regexp.escape(a) }
         end
 
-        new_content = content.split("\n")
-                             .grep_v(/#{entry_type}(\s+|\(\s*)"(#{escaped_args.join("|")})"/)
-                             .join("\n") << "\n"
+        entry_regex = /#{entry_type}(\s+|\(\s*)"(#{escaped_args.join("|")})"/
+        new_lines = T.let([], T::Array[String])
+
+        content.split("\n").compact.each do |line|
+          if line.match?(entry_regex)
+            name = line[entry_regex, 2]
+            remove_package_description_comment(new_lines, T.must(name))
+          else
+            new_lines << line
+          end
+        end
+
+        new_content = "#{new_lines.join("\n")}\n"
 
         if content.chomp == new_content.chomp &&
            type == :none &&
@@ -44,12 +54,36 @@ module Homebrew
 
       sig { params(formula_name: String, raise_error: T::Boolean).returns(T::Array[String]) }
       def self.possible_names(formula_name, raise_error: true)
-        formula = Formulary.factory(formula_name)
-        [formula_name, formula.name, formula.full_name, *formula.aliases, *formula.oldnames].compact.uniq
-      rescue FormulaUnavailableError
-        raise if raise_error
+        formula = find_formula_or_cask(formula_name, raise_error:)
+        return [] if formula.nil? || !formula.is_a?(Formula)
 
-        []
+        [formula_name, formula.name, formula.full_name, *formula.aliases, *formula.oldnames].compact.uniq
+      end
+
+      sig { params(lines: T::Array[String], package_name: String).void }
+      def self.remove_package_description_comment(lines, package_name)
+        comment = lines.last&.match(/^\s*#\s+(?<desc>.+)$/)&.[](:desc)
+        return unless comment
+        return if find_formula_or_cask(package_name)&.desc != comment
+
+        lines.pop
+      end
+
+      sig { params(name: String, raise_error: T::Boolean).returns(T.nilable(T.any(Formula, ::Cask::Cask))) }
+      def self.find_formula_or_cask(name, raise_error: false)
+        formula = begin
+          Formulary.factory(name)
+        rescue FormulaUnavailableError
+          raise if raise_error
+        end
+
+        return formula if formula.present?
+
+        begin
+          ::Cask::CaskLoader.load(name)
+        rescue ::Cask::CaskUnavailableError
+          raise if raise_error
+        end
       end
     end
   end

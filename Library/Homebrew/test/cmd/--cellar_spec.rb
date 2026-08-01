@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "cmd/--cellar"
@@ -13,10 +14,13 @@ RSpec.describe Homebrew::Cmd::Cellar do
       .and be_a_success
   end
 
-  it "prints the Cellar for a Formula", :integration_test do
-    expect { brew "--cellar", testball }
+  it "prints the Cellar for a Formula" do
+    cmd = described_class.new(["testball"])
+    allow(cmd.args.named).to receive(:to_resolved_formulae)
+      .and_return([instance_double(Formula, rack: HOMEBREW_CELLAR/"testball")])
+
+    expect { cmd.run }
       .to output(%r{#{HOMEBREW_CELLAR}/testball}o).to_stdout
       .and not_to_output.to_stderr
-      .and be_a_success
   end
 end

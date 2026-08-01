@@ -8,7 +8,7 @@ dependency_require_map = {
 
 additional_requires_map = {
   "parser"        => ["parser/current"],
-  "rubocop-rspec" => ["rubocop/rspec/expect_offense"],
+  "rubocop-rspec" => ["rubocop/rspec/expect_offense", "rubocop/rspec/cop_helper"],
 }.freeze
 
 # Freeze lockfile

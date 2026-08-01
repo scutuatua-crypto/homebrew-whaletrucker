@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "system_command"
@@ -286,6 +287,13 @@ RSpec.describe SystemCommand do
       end.not_to raise_error
     end
 
+    it "uses `Process.spawn` rather than `fork` when no privilege change is required" do
+      command = described_class.new("true")
+      expect(command).not_to receive(:fork)
+      expect(Process).to receive(:spawn).and_call_original
+      command.run!
+    end
+
     it 'does not format `stderr` when it starts with \r' do
       expect do
         Class.new.extend(SystemCommand::Mixin).system_command \
@@ -373,17 +381,17 @@ RSpec.describe SystemCommand do
             # Ignore SIGINT.
           end
 
-          described_class.run! "sleep", args: [5]
+          described_class.run! "sleep", args: [1]
 
           exit!
         end
 
-        sleep 1
+        sleep 0.1
         Process.kill("INT", pid)
 
         Process.waitpid(pid)
 
-        expect(Time.now - start_time).to be >= 5
+        expect(Time.now - start_time).to be >= 1
       end
     end
   end

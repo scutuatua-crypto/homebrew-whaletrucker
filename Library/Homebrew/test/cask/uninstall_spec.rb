@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "cask/uninstall"
@@ -11,7 +12,7 @@ RSpec.describe Cask::Uninstall, :cask do
 
       output = Regexp.new <<~EOS
         ==> Uninstalling Cask local-caffeine
-        ==> Backing App 'Caffeine.app' up to '.*Caffeine.app'
+        ==> Backing up App 'Caffeine.app' to '.*Caffeine.app'
         ==> Removing App '.*Caffeine.app'
         ==> Purging files for version 1.2.3 of Cask local-caffeine
       EOS
@@ -36,6 +37,20 @@ RSpec.describe Cask::Uninstall, :cask do
       end.not_to raise_error
     end
 
+    it "does not uninstall a pinned Cask" do
+      caffeine = Cask::CaskLoader.load(cask_path("local-caffeine"))
+      InstallHelper.stub_cask_installation(caffeine)
+      caffeine.pin
+
+      expect(Cask::Installer).not_to receive(:new)
+      expect do
+        described_class.uninstall_casks(caffeine)
+      end.to output(/local-caffeine is pinned\. You must unpin it to uninstall\./).to_stderr
+
+      expect(caffeine).to be_pinned
+      caffeine.unpin
+    end
+
     it "can uninstall and unlink multiple Casks at once" do
       caffeine = Cask::CaskLoader.load(cask_path("local-caffeine"))
       transmission = Cask::CaskLoader.load(cask_path("local-transmission-zip"))
@@ -49,9 +64,9 @@ RSpec.describe Cask::Uninstall, :cask do
       described_class.uninstall_casks(caffeine, transmission)
 
       expect(caffeine).not_to be_installed
-      expect(caffeine.config.appdir.join("Transmission.app")).not_to exist
+      expect(Pathname(caffeine.config.appdir).join("Transmission.app")).not_to exist
       expect(transmission).not_to be_installed
-      expect(transmission.config.appdir.join("Caffeine.app")).not_to exist
+      expect(Pathname(transmission.config.appdir).join("Caffeine.app")).not_to exist
     end
 
     it "can uninstall Casks when the uninstall script is missing, but only when using `--force`" do
@@ -61,7 +76,7 @@ RSpec.describe Cask::Uninstall, :cask do
 
       expect(cask).to be_installed
 
-      FileUtils.rm_r(cask.config.appdir.join("MyFancyApp.app"))
+      FileUtils.rm_r(Pathname(cask.config.appdir).join("MyFancyApp.app"))
 
       expect { described_class.uninstall_casks(cask) }
         .to raise_error(Cask::CaskError, /uninstall script .* does not exist/)
@@ -73,6 +88,30 @@ RSpec.describe Cask::Uninstall, :cask do
       end.not_to raise_error
 
       expect(cask).not_to be_installed
+    end
+
+    it "continues uninstalling remaining casks when one fails" do
+      caffeine = Cask::CaskLoader.load(cask_path("local-caffeine"))
+      transmission = Cask::CaskLoader.load(cask_path("local-transmission-zip"))
+
+      Cask::Installer.new(caffeine).install
+      Cask::Installer.new(transmission).install
+
+      expect(caffeine).to be_installed
+      expect(transmission).to be_installed
+
+      allow(Cask::Installer).to receive(:new).and_call_original
+      allow(Cask::Installer).to receive(:new).with(caffeine, anything).and_wrap_original do |_m, *_args, **_kwargs|
+        instance = instance_double(Cask::Installer)
+        allow(instance).to receive(:uninstall).and_raise(Cask::CaskError.new("caffeine uninstall failed"))
+        instance
+      end
+
+      expect { described_class.uninstall_casks(caffeine, transmission) }
+        .to raise_error(Cask::CaskError, /caffeine uninstall failed/)
+
+      expect(caffeine).to be_installed
+      expect(transmission).not_to be_installed
     end
 
     describe "when multiple versions of a cask are installed" do
@@ -147,6 +186,37 @@ RSpec.describe Cask::Uninstall, :cask do
 
         expect(app).not_to exist
         expect(caskroom_path).not_to exist
+      end
+    end
+
+    context "when a removed Cask has incomplete installed metadata" do
+      let(:token) { "removed-cask" }
+      let(:caskroom_path) { Cask::Caskroom.path.join(token) }
+      let(:saved_caskfile) do
+        caskroom_path.join(".metadata", "1.0", "20250101000000.000", "Casks", "#{token}.json")
+      end
+
+      before do
+        saved_caskfile.dirname.mkpath
+        saved_caskfile.write("{}")
+        allow(Homebrew::API).to receive(:cask_token?).with(token).and_return(false)
+        allow(Homebrew::API::Cask).to receive(:cask_json).with(token).and_raise(
+          ErrorDuringExecution.new(["curl"], status: 22),
+        )
+      end
+
+      it "removes Homebrew's records and warns that installed files may remain" do
+        expect do
+          described_class.uninstall_casks(Cask::Cask.new(token))
+        end.to output(/files installed by the Cask may remain/).to_stderr
+
+        expect(caskroom_path).not_to exist
+      end
+
+      it "does not warn when uninstalling as part of an upgrade" do
+        expect do
+          Cask::Installer.new(Cask::Cask.new(token), upgrade: true).uninstall(successor: Cask::Cask.new(token))
+        end.not_to output(/files installed by the Cask may remain/).to_stderr
       end
     end
   end
@@ -228,6 +298,41 @@ RSpec.describe Cask::Uninstall, :cask do
       expect do
         described_class.check_dependent_casks(depends_on_cask, named_args: ["with-depends-on-cask"])
       end.not_to output.to_stderr
+    end
+
+    it "does not show an error when the dependent is also being uninstalled" do
+      depends_on_cask = Cask::CaskLoader.load(cask_path("with-depends-on-cask"))
+      local_transmission = Cask::CaskLoader.load(cask_path("local-transmission-zip"))
+
+      allow(Cask::Caskroom).to receive(:casks).and_return([depends_on_cask, local_transmission])
+
+      expect do
+        described_class.check_dependent_casks(
+          local_transmission,
+          depends_on_cask,
+          named_args: ["local-transmission-zip", "with-depends-on-cask"],
+        )
+      end.not_to output.to_stderr
+    end
+
+    it "still shows an error when a non-uninstalled cask depends on one being uninstalled" do
+      depends_on_cask = Cask::CaskLoader.load(cask_path("with-depends-on-cask"))
+      depends_on_cask_multiple = Cask::CaskLoader.load(cask_path("with-depends-on-cask-multiple"))
+      local_transmission = Cask::CaskLoader.load(cask_path("local-transmission-zip"))
+
+      allow(Cask::Caskroom).to receive(:casks).and_return([
+        depends_on_cask,
+        depends_on_cask_multiple,
+        local_transmission,
+      ])
+
+      expect do
+        described_class.check_dependent_casks(
+          local_transmission,
+          depends_on_cask,
+          named_args: ["local-transmission-zip", "with-depends-on-cask"],
+        )
+      end.to output(/Refusing to uninstall/).to_stderr
     end
 
     it "lists other named args when showing the error message" do

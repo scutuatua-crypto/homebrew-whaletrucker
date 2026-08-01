@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "settings"
@@ -132,10 +133,10 @@ RSpec.describe Homebrew::SimulateSystem do
       expect(described_class.current_os).to eq MacOS.version.to_sym
     end
 
-    it "returns `:macos` on Linux with HOMEBREW_SIMULATE_MACOS_ON_LINUX", :needs_linux do
+    it "returns the newest supported macOS symbol on Linux with HOMEBREW_SIMULATE_MACOS_ON_LINUX", :needs_linux do
       described_class.clear
       ENV["HOMEBREW_SIMULATE_MACOS_ON_LINUX"] = "1"
-      expect(described_class.current_os).to eq :macos
+      expect(described_class.current_os).to eq MacOSVersion.new(HOMEBREW_MACOS_NEWEST_SUPPORTED).to_sym
     end
   end
 end

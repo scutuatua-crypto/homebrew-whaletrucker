@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 require "migrator"
@@ -10,12 +11,9 @@ RSpec.describe Migrator do
 
   let(:new_formula) { Testball.new("newname") }
   let(:old_formula) { Testball.new("oldname") }
-
   let(:new_keg_record) { HOMEBREW_CELLAR/"newname/0.1" }
   let(:old_keg_record) { HOMEBREW_CELLAR/"oldname/0.1" }
-
   let(:old_tab) { Tab.empty }
-
   let(:keg) { Keg.new(old_keg_record) }
   let(:old_pin) { HOMEBREW_PINNED_KEGS/"oldname" }
 

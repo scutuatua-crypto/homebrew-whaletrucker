@@ -1,19 +1,18 @@
 # typed: strict
 # frozen_string_literal: true
 
-require "hardware"
-
 module Homebrew
   module Bundle
     module Skipper
       class << self
         sig { params(entry: Dsl::Entry, silent: T::Boolean).returns(T::Boolean) }
         def skip?(entry, silent: false)
-          require "bundle/formula_dumper"
+          require "bundle/brew"
 
+          full_name = entry.options[:full_name]
           return true if @failed_taps&.any? do |tap|
             prefix = "#{tap}/"
-            entry.name.start_with?(prefix) || entry.options[:full_name]&.start_with?(prefix)
+            entry.name.start_with?(prefix) || (full_name.is_a?(String) && full_name.start_with?(prefix))
           end
 
           entry_type_skips = Array(skipped_entries[entry.type])
@@ -35,6 +34,15 @@ module Homebrew
           @failed_taps << tap_name
         end
 
+        sig { params(failed_taps: T.nilable(T::Array[String])).returns(T.nilable(T::Array[String])) }
+        attr_writer :failed_taps
+
+        sig {
+          params(skipped_entries: T.nilable(T::Hash[Symbol, T.nilable(T::Array[String])]))
+            .returns(T.nilable(T::Hash[Symbol, T.nilable(T::Array[String])]))
+        }
+        attr_writer :skipped_entries
+
         private
 
         sig { returns(T::Hash[Symbol, T.nilable(T::Array[String])]) }
@@ -42,7 +50,7 @@ module Homebrew
           return @skipped_entries if @skipped_entries
 
           @skipped_entries ||= T.let({}, T.nilable(T::Hash[Symbol, T.nilable(T::Array[String])]))
-          [:brew, :cask, :mas, :tap, :flatpak].each do |type|
+          [:brew, :cask, :mas, :tap, :flatpak, :winget].each do |type|
             @skipped_entries[type] =
               ENV["HOMEBREW_BUNDLE_#{type.to_s.upcase}_SKIP"]&.split
           end

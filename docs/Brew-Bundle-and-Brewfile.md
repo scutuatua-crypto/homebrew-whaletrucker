@@ -1,5 +1,5 @@
 ---
-last_review_date: "2025-03-19"
+last_review_date: "2026-07-18"
 ---
 
 # Homebrew Bundle, `brew bundle` and `Brewfile`
@@ -12,7 +12,7 @@ Rather than specifying the `brew` commands you wish to run, you can specify the 
 
 See also the [`brew bundle` section of `man brew`](Manpage.md#bundle-subcommand) or `brew bundle --help`.
 
-## Basic Usage
+## Basic usage
 
 ### `brew bundle`
 
@@ -54,9 +54,11 @@ You can use this behaviour in scripts like so:
 brew bundle check || brew bundle install
 ```
 
+If this fails without `--verbose`, run `brew bundle check --verbose` to list unmet dependencies.
+
 ### Types
 
-As well as supporting formulae (`brew "..."`), you can also use `brew bundle` with casks, taps, Mac App Store apps, VSCode extensions, Go, Cargo and Flatpak packages and to start background services with `brew services`.
+As well as supporting formulae (`brew "..."`), you can also use `brew bundle` with casks, taps, Mac App Store apps, WinGet packages on WSL, VS Code extensions, Go packages, Cargo packages, npm packages, uv tools, Flatpak packages and krew kubectl plugins and to start background services with `brew services`.
 
 ```ruby
 tap "apple/apple"
@@ -64,13 +66,20 @@ brew "apple/apple/game-porting-toolkit"
 brew "postgresql@16", restart_service: true
 cask "firefox"
 mas "Refined GitHub", id: 1519867270
+winget "Steam", id: "Valve.Steam"
+winget "PowerToys", id: "XP89DCGQ3K6VLD", source: "msstore"
 vscode "editorconfig.editorconfig"
 go "github.com/charmbracelet/crush"
 cargo "ripgrep"
+uv "mkdocs"
+uv "ruff", source: "git+https://github.com/astral-sh/ruff.git"
+krew "ctx"
 flatpak "com.visualstudio.code"
 flatpak "org.godotengine.Godot", remote: "flathub-beta", url: "https://dl.flathub.org/beta-repo/"
 flatpak "io.github.dvlv.boxbuddyrs", remote: "flathub-beta"
 ```
+
+WinGet installs run with installer interactivity disabled. If WinGet reports that elevation is required, `brew bundle` retries through Windows UAC.
 
 Run `brew bundle` again and this outputs:
 
@@ -84,7 +93,8 @@ Using Refined GitHub
 Using editorconfig.editorconfig
 Using github.com/charmbracelet/crush
 Using ripgrep
-`brew bundle` complete! 8 Brewfile dependencies now installed.
+Using mkdocs
+`brew bundle` complete! 9 Brewfile dependencies now installed.
 ```
 
 ### Projects
@@ -93,14 +103,15 @@ Adding a `Brewfile` to a project's repository (like you might a `package.json`, 
 
 It allows you to tell users to run a single command to install all dependencies for a project and start any services.
 
-As Homebrew supports both macOS, Linux and WSL: you can have this single command setup project dependencies on three operating systems and in continuous integration services like GitHub Actions (where it's installed by default on macOS and easily on Linux with [`Homebrew/actions/setup-homebrew`](https://github.com/Homebrew/actions/tree/HEAD/setup-homebrew)).
+Homebrew supports macOS, Linux and WSL, so one command can set up project dependencies across these environments and in continuous-integration services such as GitHub Actions.
+Homebrew is installed by default on GitHub-hosted macOS runners and can be installed on Linux with [`Homebrew/actions/setup-homebrew`](https://github.com/Homebrew/actions/tree/HEAD/setup-homebrew).
 
 See [GitHub's "Scripts To Rule Them All" `script/bootstrap` example](https://github.com/github/scripts-to-rule-them-all/blob/HEAD/script/bootstrap)
 for how you might use a `Brewfile` and `brew bundle` to install project dependencies with Homebrew.
 
 ### `brew bundle dump`
 
-`Brewfile`s can also be used as a way of saving all supported packages into a single file.
+`Brewfile`s can also be used as a way of saving all supported packages into a single file. `brew bundle dump` is Homebrew's installed-state snapshot command: it records supported installed formulae, casks, taps and other package types as a `Brewfile`.
 
 You can do this with `brew bundle dump --global --force` to write to e.g. `~/.Brewfile` (check `man brew` for the exact path used in your configuration):
 
@@ -108,10 +119,10 @@ You can do this with `brew bundle dump --global --force` to write to e.g. `~/.Br
 brew bundle dump --global --force
 ```
 
-If you also pass `--describe`, you can also get the `Brewfile` to contain descriptions of each of the packages:
+By default, the generated `Brewfile` also contains descriptions of each of the packages:
 
 ```console
-brew bundle dump --global --force --describe
+brew bundle dump --global --force
 ```
 
 might add something like the following:
@@ -121,13 +132,15 @@ might add something like the following:
 brew "ruby"
 ```
 
-You can then reinstall (and, by default, upgrade) all of these with:
+You can then restore (and, by default, upgrade) all of these with:
 
 ```console
 brew bundle --global
-````
+```
 
-## Advanced Usage
+You can keep multiple snapshots by writing to different `Brewfile`s with `--file`, commit them to version control and compare them with standard diff tools. To make the active installed state match a snapshot more closely, run `brew bundle cleanup --force --file=/path/to/Brewfile` after installing it to remove supported dependencies not listed in that `Brewfile`.
+
+## Advanced usage
 
 ### `brew bundle cleanup`
 
@@ -246,6 +259,8 @@ It's also got the same backbone as `brew bundle exec` so the same arguments (e.g
 By default, `brew bundle` will attempt to upgrade all software.
 You can disable this behaviour by passing `--no-upgrade` or with `export HOMEBREW_BUNDLE_NO_UPGRADE=1` in your environment.
 
+This only skips `brew upgrade`. It does not pin versions or add lock file support.
+
 If you do this, you can upgrade everything with:
 
 ```console
@@ -270,7 +285,7 @@ Rather than all `Brewfile` functionality one-by-one: here's a commented example 
 
 ```ruby
 # Run `brew tap` with a custom URL
-tap "user/tap-repo", "https://user@bitbucket.org/user/homebrew-tap-repo.git"
+tap "user/tap-repository", "https://user@bitbucket.org/user/homebrew-tap-repository.git"
 
 # Set arguments passed to all `brew install --cask` commands for `cask "..."`
 # In this example, pass `--appdir=~/Applications` and `--require_sha`
@@ -280,7 +295,7 @@ cask_args appdir: "~/Applications", require_sha: true
 # This also runs `brew link --overwrite nginx-full` and `brew services restart nginx-full` afterwards.
 brew "denji/nginx/nginx-full", link: :overwrite, args: ["with-rmtp"], restart_service: :always
 
-# Runs `brew install mysql@5.6`, `brew services restart mysql@5.6` only if it was was installed or upgraded,
+# Runs `brew install mysql@5.6`, `brew services restart mysql@5.6` only if it was installed or upgraded,
 # `brew link mysql@5.6` and `brew unlink mysql` (if `mysql` is installed)
 brew "mysql@5.6", restart_service: :changed, link: true, conflicts_with: ["mysql"]
 
@@ -290,6 +305,19 @@ brew "postgresql@16",
 
 # Runs `brew install ruby` and, afterwards, writes the installed version to the '.ruby-version` file.
 brew "ruby", version_file: ".ruby-version"
+
+# Trusts the tap, formula or cask so Homebrew loads it when tap trust is required.
+# This works on `tap`, `brew` and `cask` entries.
+tap "user/repository", trusted: true
+brew "user/repository/formula", trusted: true
+cask "user/repository/cask", trusted: true
+
+# Trusts only named formulae, casks or commands from a tap.
+tap "user/repository", trusted: {
+  formula:  "formula",
+  casks:    ["cask"],
+  commands: ["command"],
+}
 
 # Runs `brew install gnupg` or `brew install glibc` only on the specified OS.
 # Note: `brew bundle list` will not output `gnupg` on Linux or `glibc` on macOS` in this case:
@@ -318,17 +346,68 @@ cask "google-cloud-sdk", postinstall: "${HOMEBREW_PREFIX}/bin/gcloud components 
 ENV["SOME_ENV_VAR"] = "some_value"
 ```
 
+### `version_file`
+
+Formula entries support `version_file:` to write the installed formula version to a file after `brew bundle install` processes that formula.
+This is useful when a project wants Homebrew to install a runtime and keep a conventional version file such as `.ruby-version` in sync.
+
+```ruby
+brew "ruby", version_file: ".ruby-version"
+```
+
+### `trusted`
+
+`tap`, `brew` and `cask` entries support `trusted: true` to declaratively
+[trust](Tap-Trust.md) a non-official tap, formula or cask. Homebrew trusts the
+entry before installing it, so it loads even when tap trust is required.
+
+```ruby
+tap "user/repository", trusted: true
+brew "user/repository/formula", trusted: true
+cask "user/repository/cask", trusted: true
+```
+
+Tap entries can also trust specific formulae, casks and commands from that tap
+without trusting the whole tap:
+
+```ruby
+tap "user/repository", trusted: {
+  formula:  "formula",
+  formulae: ["another-formula"],
+  cask:     "cask",
+  casks:    ["another-cask"],
+  command:  "command",
+  commands: ["another-command"],
+}
+```
+
+The singular and plural keys can both be used. The values are item names inside
+that tap, so `formula: "foo"` on `tap "user/repository"` trusts
+`user/repository/foo` as a formula.
+
+As with `brew trust`, prefer trusting the specific formula, cask or command you
+need over trusting a whole tap. `brew bundle dump` writes `trusted: true` for
+trusted `brew`, `cask` and whole-tap entries. It writes tap-level trust hashes
+for trusted formulae, casks and commands from a tap that are not otherwise
+present in the dumped `Brewfile`.
+
+When `brew bundle cleanup --force` runs, it resets Homebrew's tap trust file to
+the trust values declared by the `Brewfile` and removes trust entries that are
+not declared there.
+
 ## Versions
 
 Homebrew is a [rolling release](https://en.wikipedia.org/wiki/Rolling_release) package manager so it does not support installing arbitrary older versions of software.
 
-`brew bundle` does not have a concept of a "`Brewfile` lock file" that can be used to pin versions like e.g. `package-lock.json` or `Gemfile.lock`.
+`brew bundle` does not and will not have a concept of a "`Brewfile` lock file" that can be used to pin versions like e.g. `package-lock.json` or `Gemfile.lock`.
 
-This must be done with solutions outside or built on top of `brew bundle` instead.
+If you want `brew bundle` to stop upgrading installed dependencies, pass `--no-upgrade` or set `export HOMEBREW_BUNDLE_NO_UPGRADE=1`.
 
-## Adding New Packages Support
+For the tradeoffs and alternatives, see [Locking installed formulae at specific versions](Versions.md#locking-installed-formulae-at-specific-versions).
 
-`brew bundle` currently supports Homebrew, Homebrew Cask, Mac App Store, Visual Studio Code (and forks/variants), Go and Flatpak packages.
+## Adding new packages support
+
+`brew bundle` currently supports Homebrew formulae and casks, Mac App Store apps, WinGet packages on WSL, Visual Studio Code extensions and variants, Go packages, Cargo packages, npm packages, uv tools, Flatpak packages and krew kubectl plugins.
 
 We are interested in contributions for other packages' installers/checkers/dumpers but they must:
 

@@ -1,10 +1,11 @@
-# typed: true # rubocop:todo Sorbet/StrictSigil
+# typed: strict
 # frozen_string_literal: true
 
 require "test_bot/step"
 require "test_bot/test_runner"
 
 require "date"
+require "env_config"
 require "json"
 
 require "development_tools"
@@ -12,25 +13,60 @@ require "formula"
 require "formula_installer"
 require "os"
 require "tap"
+require "trust"
 require "utils"
 require "utils/bottles"
+require "utils/output"
+require "utils/portable_ruby"
 
 module Homebrew
   module TestBot
+    extend Utils::Output::Mixin
+
     module_function
 
     GIT = "/usr/bin/git"
 
     HOMEBREW_TAP_REGEX = %r{^([\w-]+)/homebrew-([\w-]+)$}
 
+    sig { params(args: Homebrew::Cmd::TestBotCmd::Args).returns(T::Boolean) }
     def cleanup?(args)
       args.cleanup? || GitHub::Actions.env_set?
     end
 
+    sig { params(args: Homebrew::Cmd::TestBotCmd::Args).returns(T::Boolean) }
     def local?(args)
       args.local? || GitHub::Actions.env_set?
     end
 
+    sig { params(tap: T.nilable(Tap)).void }
+    def trust_test_tap!(tap)
+      return if tap.nil? || tap.official?
+
+      action = Homebrew::Trust.trust!(:tap, tap) ? "Trusted" : "Already trusted"
+      Homebrew::TestBot.ohai "#{action} tap: #{tap.name}"
+    end
+
+    sig { void }
+    def setup_github_actions_sandbox!
+      return unless GitHub::Actions.env_set?
+
+      # TODO: odeprecated: make Linux sandbox support mandatory when using `test-bot`.
+      return unless Homebrew::EnvConfig.sandbox_linux?
+
+      return if configure_sandbox!
+
+      require "sandbox"
+      Sandbox.ensure_sandbox_available! if ENV["GITHUB_REPOSITORY_OWNER"] == "Homebrew"
+
+      ENV["HOMEBREW_NO_SANDBOX_LINUX"] = "1"
+      Sandbox.reset_state!
+    end
+
+    sig { returns(T::Boolean) }
+    def configure_sandbox! = true
+
+    sig { params(tap: T.nilable(String)).returns(T.nilable(Tap)) }
     def resolve_test_tap(tap = nil)
       return Tap.fetch(tap) if tap
 
@@ -52,6 +88,7 @@ module Homebrew
       end
     end
 
+    sig { params(args: Homebrew::Cmd::TestBotCmd::Args).void }
     def run!(args)
       $stdout.sync = true
       $stderr.sync = true
@@ -76,11 +113,24 @@ module Homebrew
         home = "#{Dir.pwd}/home"
         logs = "#{Dir.pwd}/logs"
         gitconfig = "#{Dir.home}/.gitconfig"
+        trust_file = Homebrew::Trust.trust_file
         ENV["HOMEBREW_HOME"] = ENV["HOME"] = home
+        ENV["HOMEBREW_USER_CONFIG_HOME"] = "#{home}/.homebrew"
         ENV["HOMEBREW_LOGS"] = logs
         FileUtils.mkdir_p home
+        FileUtils.mkdir_p ENV.fetch("HOMEBREW_USER_CONFIG_HOME")
+        FileUtils.chmod 0700, ENV.fetch("HOMEBREW_USER_CONFIG_HOME")
         FileUtils.mkdir_p logs
         FileUtils.cp gitconfig, home if File.exist?(gitconfig)
+        FileUtils.cp trust_file, ENV.fetch("HOMEBREW_USER_CONFIG_HOME") if trust_file.exist?
+      end
+
+      if !args.only_cleanup_before? &&
+         !args.only_tap_syntax? &&
+         !args.only_formulae_detect? &&
+         !args.only_bottles_fetch? &&
+         !args.only_cleanup_after?
+        setup_github_actions_sandbox!
       end
 
       tap = resolve_test_tap(args.tap)
@@ -100,6 +150,8 @@ module Homebrew
         elsif (tap.path/".git/shallow").exist?
           raise unless quiet_system GIT, "-C", tap.path, "fetch", "--unshallow"
         end
+
+        trust_test_tap!(tap)
       end
 
       brew_version = Utils.safe_popen_read(
@@ -137,3 +189,5 @@ module Homebrew
     end
   end
 end
+
+require "extend/os/test_bot"

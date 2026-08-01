@@ -1,3 +1,4 @@
+# typed: strict
 # frozen_string_literal: true
 
 require "PATH"
@@ -107,7 +108,9 @@ RSpec.describe PATH do
       allow(File).to receive(:directory?).with("/path2").and_return(false)
 
       path = described_class.new("/path1", "/path2")
-      expect(path.existing.to_ary).to eq(["/path1"])
+      existing = path.existing
+      expect(existing).not_to be_nil
+      expect(existing&.to_ary).to eq(["/path1"])
       expect(path.to_ary).to eq(["/path1", "/path2"])
     end
 

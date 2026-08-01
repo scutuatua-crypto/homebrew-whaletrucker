@@ -4,7 +4,7 @@ last_review_date: "2025-02-08"
 
 # Querying `brew`
 
-_In this document we will be using [jq](https://stedolan.github.io/jq/) to parse JSON, available from Homebrew using `brew install jq`._
+_In this document we will be using [jq](https://jqlang.org/) to parse JSON, available from Homebrew using `brew install jq`._
 
 ## Overview
 

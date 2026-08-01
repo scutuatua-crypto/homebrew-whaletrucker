@@ -21,8 +21,6 @@ module Homebrew
 
       return if @general.present?
       raise UsageError, "`--version` must not be empty." if arm.blank? && intel.blank?
-      raise UsageError, "`--version-arm` must not be empty." if arm.blank?
-      raise UsageError, "`--version-intel` must not be empty." if intel.blank?
     end
 
     sig {
@@ -34,6 +32,10 @@ module Homebrew
         version
       elsif version.is_a?(String)
         parse_cask_version(version)
+      else
+        # simplecov:disable
+        T.absurd(version)
+        # simplecov:enable
       end
     end
 

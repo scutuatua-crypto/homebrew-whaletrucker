@@ -1,3 +1,4 @@
+# typed: true
 # frozen_string_literal: true
 
 require "download_strategy"
@@ -23,7 +24,49 @@ RSpec.describe CurlDownloadStrategy do
   end
 
   it "parses the opts and sets the corresponding args" do
-    expect(strategy.send(:_curl_args)).to eq(["--user", "download:123456"])
+    expect(strategy._curl_args).to eq(["--user", "download:123456"])
+  end
+
+  context "with a deferred HOMEBREW_ secret in a header" do
+    let(:specs) { { headers: [header] } }
+    let(:header) do
+      ENV["HOMEBREW_PRIVATE_TOKEN"] = "glpat-secret"
+      ENV.clear_sensitive_environment_for_eval! { "PRIVATE-TOKEN: #{ENV.fetch("HOMEBREW_PRIVATE_TOKEN", nil)}" }
+    end
+
+    after { ENV.delete("HOMEBREW_PRIVATE_TOKEN") }
+
+    it "does not expand the placeholder outside Downloadable#fetch" do
+      expect(header).to include(EnvSensitive::DEFERRED_PLACEHOLDER_PREFIX)
+      expect(strategy._curl_args).to include(header)
+      expect(strategy._curl_args).to include("--max-redirs", "0")
+    end
+  end
+
+  context "with a deferred HOMEBREW_ secret in the URL" do
+    let(:url) do
+      ENV["HOMEBREW_PRIVATE_TOKEN"] = "glpat-secret"
+      ENV.clear_sensitive_environment_for_eval! do
+        "https://example.com/foo.tar.gz?private_token=#{ENV.fetch("HOMEBREW_PRIVATE_TOKEN", nil)}"
+      end
+    end
+
+    after { ENV.delete("HOMEBREW_PRIVATE_TOKEN") }
+
+    it "does not expand the placeholder outside Downloadable#fetch" do
+      expect(url).to include(EnvSensitive::DEFERRED_PLACEHOLDER_PREFIX)
+      expect(strategy).to receive(:system_command)
+        .with(
+          /curl/,
+          hash_including(args: array_including(url)),
+        )
+        .at_least(:once)
+        .and_return(instance_double(SystemCommand::Result, success?: true, stdout: "", assert_success!: nil))
+
+      strategy.temporary_path.dirname.mkpath
+      FileUtils.touch strategy.temporary_path
+      strategy.fetch
+    end
   end
 
   describe "#fetch" do
@@ -144,6 +187,50 @@ RSpec.describe CurlDownloadStrategy do
       end
     end
 
+    context "with a deferred HOMEBREW_ secret in a header" do
+      let(:specs) { { headers: [header] } }
+      let(:header) do
+        ENV["HOMEBREW_PRIVATE_TOKEN"] = "glpat-secret"
+        ENV.clear_sensitive_environment_for_eval! { "PRIVATE-TOKEN: #{ENV.fetch("HOMEBREW_PRIVATE_TOKEN", nil)}" }
+      end
+
+      before do
+        strategy.allow_deferred_environment_expansion!
+      end
+
+      after { ENV.delete("HOMEBREW_PRIVATE_TOKEN") }
+
+      it "keeps location handling but refuses redirects while sending caller-supplied headers" do
+        expect(strategy).to receive(:system_command) do |_command, options|
+          if options[:args].include?("PRIVATE-TOKEN: glpat-secret")
+            expect(options[:args]).to include("--location", "--max-redirs", "0")
+          end
+
+          instance_double(SystemCommand::Result, success?: true, stdout: "", assert_success!: nil)
+        end.at_least(:once)
+
+        strategy.fetch
+      end
+    end
+
+    context "when a redirect crosses to another host" do
+      let(:specs) { { headers: ["PRIVATE-TOKEN: glpat-secret"] } }
+
+      before do
+        allow(strategy).to receive(:resolve_url_basename_time_file_size)
+          .and_return(["https://other.example.org/foo.tar.gz", "foo.tar.gz", nil, 0, nil, true])
+      end
+
+      it "does not forward caller-supplied headers to the new host" do
+        expect(strategy).to receive(:system_command) do |_command, options|
+          expect(options[:args]).not_to include("PRIVATE-TOKEN: glpat-secret")
+          instance_double(SystemCommand::Result, success?: true, stdout: "", assert_success!: nil)
+        end.at_least(:once)
+
+        strategy.fetch
+      end
+    end
+
     context "with artifact_domain set" do
       let(:artifact_domain) { "https://mirror.example.com/oci" }
 
@@ -194,6 +281,133 @@ RSpec.describe CurlDownloadStrategy do
             .and_return(SystemCommand::Result.new(["curl"], [[:stdout, ""]], status, secrets: []))
 
           strategy.fetch
+        end
+
+        context "when the artifact domain is unreachable" do
+          let(:failed_status) { instance_double(Process::Status, success?: false, exitstatus: 6, termsig: nil) }
+
+          it "falls back to the original ghcr.io URL" do
+            artifact_url = "#{artifact_domain}/#{resource_path}"
+
+            # First call: artifact domain URL fails
+            expect(strategy).to receive(:_fetch)
+              .with(url: artifact_url, resolved_url: artifact_url,
+                    timeout: anything)
+              .once
+              .and_raise(ErrorDuringExecution.new(["curl", artifact_url], status: failed_status))
+
+            # Second call: original ghcr.io URL succeeds
+            expect(strategy).to receive(:_fetch)
+              .with(url: url, resolved_url: url,
+                    timeout: anything)
+              .once
+              .and_return(nil)
+
+            strategy.fetch
+          end
+        end
+
+        context "when artifact_domain_no_fallback is set" do
+          let(:failed_status) { instance_double(Process::Status, success?: false, exitstatus: 6, termsig: nil) }
+
+          before do
+            allow(Homebrew::EnvConfig).to receive(:artifact_domain_no_fallback?).and_return(true)
+          end
+
+          it "does not fall back to the original URL" do
+            artifact_url = "#{artifact_domain}/#{resource_path}"
+
+            expect(strategy).to receive(:_fetch)
+              .with(url: artifact_url, resolved_url: artifact_url,
+                    timeout: anything)
+              .once
+              .and_raise(ErrorDuringExecution.new(["curl", artifact_url], status: failed_status))
+
+            expect { strategy.fetch }.to raise_error(CurlDownloadStrategyError)
+          end
+        end
+      end
+    end
+  end
+
+  describe "#resolved_time_file_size" do
+    context "when content-length header is present" do
+      let(:headers) do
+        {
+          "content-length" => "1024",
+        }
+      end
+
+      it "returns the content-length value" do
+        _, file_size = strategy.resolved_time_file_size
+        expect(file_size).to eq(1024)
+      end
+    end
+
+    context "when only content-range header is present" do
+      let(:headers) do
+        {
+          "content-range" => "bytes 0-1023/1024",
+        }
+      end
+
+      it "returns the total size from content-range" do
+        _, file_size = strategy.resolved_time_file_size
+        expect(file_size).to eq(1024)
+      end
+    end
+
+    context "when content-length is zero and content-range is present" do
+      let(:headers) do
+        {
+          "content-length" => "0",
+          "content-range"  => "bytes 0-999/1000",
+        }
+      end
+
+      it "falls back to content-range" do
+        _, file_size = strategy.resolved_time_file_size
+        expect(file_size).to eq(1000)
+      end
+    end
+
+    context "when content-range has unsatisfied range format (416 response)" do
+      let(:headers) do
+        {
+          "content-range" => "bytes */67589",
+        }
+      end
+
+      it "extracts size from unsatisfied range format" do
+        _, file_size = strategy.resolved_time_file_size
+        expect(file_size).to eq(67589)
+      end
+    end
+
+    context "when content-range has unknown size" do
+      let(:headers) do
+        {
+          "content-range" => "bytes 0-1023/*",
+        }
+      end
+
+      it "raises when size cannot be determined" do
+        expect { strategy.resolved_time_file_size }.to raise_error(TypeError)
+      end
+    end
+
+    context "when content-range has invalid format" do
+      test_each(["invalid-format", "bytes 0-1023", "bytes 0-1023/abc", "bytes 0-1023/", ""]) do |invalid_value|
+        context "with value #{invalid_value.inspect}" do
+          let(:headers) do
+            {
+              "content-range" => invalid_value,
+            }
+          end
+
+          it "raises when size cannot be parsed" do
+            expect { strategy.resolved_time_file_size }.to raise_error(TypeError)
+          end
         end
       end
     end

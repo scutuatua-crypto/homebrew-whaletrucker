@@ -1,3 +1,4 @@
+# typed: false
 # frozen_string_literal: true
 
 RSpec.describe Cask::Artifact::App, :cask do
@@ -9,13 +10,15 @@ RSpec.describe Cask::Artifact::App, :cask do
   let(:app) { cask.artifacts.find { |a| a.is_a?(described_class) } }
 
   let(:source_path) { cask.staged_path.join("Caffeine.app") }
-  let(:target_path) { cask.config.appdir.join("Caffeine.app") }
+  let(:target_path) { Pathname(cask.config.appdir).join("Caffeine.app") }
 
   let(:install_phase) { app.install_phase(command:, adopt:, force:, auto_updates:) }
   let(:uninstall_phase) { app.uninstall_phase(command:, force:) }
 
+  let(:setup_cask) { InstallHelper.install_without_artifacts(cask) }
+
   before do
-    InstallHelper.install_without_artifacts(cask)
+    setup_cask
   end
 
   describe "install_phase" do
@@ -57,7 +60,7 @@ RSpec.describe Cask::Artifact::App, :cask do
       expect(target_path).to be_a_directory
       expect(source_path).to be_a_symlink
 
-      expect(cask.config.appdir.join("Caffeine Deluxe.app")).not_to exist
+      expect(Pathname(cask.config.appdir).join("Caffeine Deluxe.app")).not_to exist
       expect(cask.staged_path.join("Caffeine Deluxe.app")).to exist
     end
 
@@ -270,12 +273,14 @@ RSpec.describe Cask::Artifact::App, :cask do
       end
     end
 
-    it "gives a warning if the source doesn't exist" do
-      FileUtils.rm_r(source_path)
+    context "when source doesn't exist" do
+      let(:setup_cask) { cask.staged_path.mkpath }
 
-      message = "It seems the App source '#{source_path}' is not there."
+      it "gives a warning if the source doesn't exist" do
+        message = "It seems the App source '#{source_path}' is not there."
 
-      expect { install_phase }.to raise_error(Cask::CaskError, message)
+        expect { install_phase }.to raise_error(Cask::CaskError, message)
+      end
     end
   end
 
@@ -304,14 +309,52 @@ RSpec.describe Cask::Artifact::App, :cask do
 
       expect(source_path).to be_a_directory
     end
+
+    it "uses clonefile copy arguments on supported macOS versions", :needs_macos do
+      install_phase
+
+      allow(MacOS).to receive(:version).and_return(MacOSVersion.from_symbol(:sonoma))
+
+      expect(app.backup_copy_args(target_path, source_path)).to eq(["-c", "-pR", target_path, source_path])
+    end
+
+    it "uses portable copy arguments on older macOS versions", :needs_macos do
+      install_phase
+
+      allow(MacOS).to receive(:version).and_return(MacOSVersion.from_symbol(:ventura))
+
+      expect(app.backup_copy_args(target_path, source_path)).to eq(["-pR", target_path, source_path])
+    end
+
+    it "uses portable copy arguments across filesystems", :needs_macos do
+      install_phase
+
+      source_dir = source_path.dirname
+      allow(MacOS).to receive(:version).and_return(MacOSVersion.from_symbol(:sonoma))
+      allow(target_path).to receive(:stat).and_return(instance_double(File::Stat, dev: 1))
+      allow(source_path).to receive(:dirname).and_return(source_dir)
+      allow(source_dir).to receive(:stat).and_return(instance_double(File::Stat, dev: 2))
+
+      expect(app.backup_copy_args(target_path, source_path)).to eq(["-pR", target_path, source_path])
+    end
   end
 
   describe "summary" do
     let(:description) { app.class.english_description }
     let(:contents) { app.summarize_installed }
 
-    it "returns the correct english_description" do
-      expect(description).to eq("Apps")
+    context "without installation" do
+      let(:setup_cask) { nil }
+
+      it "returns the correct english_description" do
+        expect(description).to eq("Apps")
+      end
+
+      describe "app is missing" do
+        it "returns a warning and the supposed path to the app" do
+          expect(contents).to match(/.*Missing App.*: #{target_path}/)
+        end
+      end
     end
 
     describe "app is correctly installed" do
@@ -319,12 +362,6 @@ RSpec.describe Cask::Artifact::App, :cask do
         install_phase
 
         expect(contents).to eq("#{target_path} (#{target_path.abv})")
-      end
-    end
-
-    describe "app is missing" do
-      it "returns a warning and the supposed path to the app" do
-        expect(contents).to match(/.*Missing App.*: #{target_path}/)
       end
     end
   end

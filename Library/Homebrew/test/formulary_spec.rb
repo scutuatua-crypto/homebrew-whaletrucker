@@ -1,10 +1,10 @@
+# typed: false
 # frozen_string_literal: true
 
 require "formula"
 require "formula_installer"
 require "utils/bottles"
 
-# rubocop:todo RSpec/AggregateExamples
 RSpec.describe Formulary do
   let(:formula_name) { "testball_bottle" }
   let(:formula_path) { CoreTap.instance.new_formula_path(formula_name) }
@@ -52,6 +52,72 @@ RSpec.describe Formulary do
 
     it "replaces '@' with 'AT'" do
       expect(described_class.class_s("openssl@1.1")).to eq("OpensslAT11")
+    end
+  end
+
+  describe "::load_formula" do
+    it "masks sensitive environment variables while evaluating formulae" do
+      with_env(HOMEBREW_SECRET_TOKEN: "password") do
+        formula_class = described_class.load_formula(
+          "sensitive-env",
+          mktmpdir/"sensitive-env.rb",
+          <<~RUBY,
+            class SensitiveEnv < Formula
+              SECRET_TOKEN_VALUE = ENV.fetch("HOMEBREW_SECRET_TOKEN", nil)
+              url "https://brew.sh/sensitive-env-1.0.tar.gz"
+            end
+          RUBY
+          "SensitiveEnvNamespace",
+          flags:         [],
+          ignore_errors: false,
+        )
+
+        expect(formula_class::SECRET_TOKEN_VALUE).not_to eq("password")
+        expect(ENV.fetch("HOMEBREW_SECRET_TOKEN", nil)).to eq("password")
+      end
+    end
+
+    it "allows the GitHub API token while evaluating formulae" do
+      with_env(HOMEBREW_GITHUB_API_TOKEN: "github-token") do
+        formula_class = described_class.load_formula(
+          "github-token-env",
+          mktmpdir/"github-token-env.rb",
+          <<~RUBY,
+            class GithubTokenEnv < Formula
+              GITHUB_TOKEN_PRESENT = ENV.key?("HOMEBREW_GITHUB_API_TOKEN")
+              url "https://brew.sh/github-token-env-1.0.tar.gz"
+            end
+          RUBY
+          "GithubTokenEnvNamespace",
+          flags:         [],
+          ignore_errors: false,
+        )
+
+        expect(formula_class::GITHUB_TOKEN_PRESENT).to be(true)
+      end
+    end
+
+    it "refuses untrusted third-party tap formulae when trust is enabled" do
+      tap = Tap.fetch("formularytrust", "foo")
+      formula_path = tap.formula_dir/"sensitive-env.rb"
+      formula_path.dirname.mkpath
+      formula_path.write <<~RUBY
+        class SensitiveEnv < Formula
+          url "https://brew.sh/sensitive-env-1.0.tar.gz"
+        end
+      RUBY
+      full_name = "#{tap.name}/sensitive-env"
+
+      with_env(HOMEBREW_REQUIRE_TAP_TRUST: "1", HOMEBREW_USER_CONFIG_HOME: mktmpdir) do
+        expect { described_class.factory(formula_path) }
+          .to raise_error(Homebrew::UntrustedTapError, /#{tap.name}/)
+
+        Homebrew::Trust.trust!(:formula, full_name)
+
+        expect(described_class.factory(formula_path).full_name).to eq(full_name)
+      end
+    ensure
+      FileUtils.rm_rf HOMEBREW_TAP_DIRECTORY/"formularytrust"
     end
   end
 
@@ -167,11 +233,8 @@ RSpec.describe Formulary do
       context "when given a bottle" do
         subject(:formula) { described_class.factory(bottle) }
 
-        it "returns a Formula" do
+        specify do
           expect(formula).to be_a(Formula)
-        end
-
-        it "calling #local_bottle_path on the returned Formula returns the bottle path" do
           expect(formula.local_bottle_path).to eq(bottle.realpath)
         end
       end
@@ -187,11 +250,8 @@ RSpec.describe Formulary do
           FileUtils.ln_s formula_path, alias_path
         end
 
-        it "returns a Formula" do
+        specify do
           expect(formula).to be_a(Formula)
-        end
-
-        it "calling #alias_path on the returned Formula returns the alias path" do
           expect(formula.alias_path).to eq(alias_path)
         end
       end
@@ -241,11 +301,11 @@ RSpec.describe Formulary do
         end
 
         it "returns a Formula that has gone through a tap migration into homebrew/core" do
-          tap_migrations_path.write <<~EOS
+          tap_migrations_path.write <<~JSON
             {
               "#{formula_name}": "homebrew/core"
             }
-          EOS
+          JSON
           formula = described_class.factory("#{tap}/#{formula_name}")
           expect(formula).to be_a(Formula)
           expect(formula.tap).to eq(CoreTap.instance)
@@ -253,15 +313,29 @@ RSpec.describe Formulary do
         end
 
         it "returns a Formula that has gone through a tap migration into another tap" do
-          tap_migrations_path.write <<~EOS
+          tap_migrations_path.write <<~JSON
             {
               "#{formula_name}": "#{another_tap}"
             }
-          EOS
+          JSON
           formula = described_class.factory("#{tap}/#{formula_name}")
           expect(formula).to be_a(Formula)
           expect(formula.tap).to eq(another_tap)
           expect(formula.path).to eq(another_tap_formula_path)
+        end
+
+        it "raises when the migrated tap is not installed" do
+          tap_migrations_path.write <<~JSON
+            {
+              "#{formula_name}": "#{another_tap}"
+            }
+          JSON
+          FileUtils.rm_rf another_tap.path
+
+          expect(another_tap).not_to receive(:ensure_installed!)
+
+          expect { described_class.factory("#{tap}/#{formula_name}") }
+            .to raise_error(TapFormulaUnavailableError, /If you trust this tap/)
         end
       end
 
@@ -282,12 +356,9 @@ RSpec.describe Formulary do
           expect(described_class.factory(formula_name)).to be_a(Formula)
         end
 
-        it "returns a Formula from an Alias path" do
-          expect(described_class.factory(alias_name)).to be_a(Formula)
-        end
-
-        it "returns a Formula from a fully qualified Alias path" do
-          expect(described_class.factory("#{tap.name}/#{alias_name}")).to be_a(Formula)
+        it "returns a Formula with the correct alias path from a bare or fully qualified Alias name" do
+          expect(described_class.factory(alias_name).alias_path).to eq(alias_path)
+          expect(described_class.factory("#{tap.name}/#{alias_name}").alias_path).to eq(alias_path)
         end
 
         it "raises an error when the Formula cannot be found" do
@@ -475,7 +546,16 @@ RSpec.describe Formulary do
 
       before do
         # avoid unnecessary network calls
-        allow(Homebrew::API::Formula).to receive_messages(all_aliases: {}, all_renames: {})
+        allow(Homebrew::API).to receive_messages(formula_names: [formula_name], formula_aliases: {},
+                                                 formula_renames: {})
+        allow(Homebrew::API::Internal).to receive(:formula_hashes) { Homebrew::API::Formula.all_formulae }
+        allow(Homebrew::API::Internal).to receive(:formula_struct) do |name|
+          Homebrew::API::Formula::FormulaStructGenerator.generate_formula_struct_hash(
+            Homebrew::API::Formula.all_formulae.fetch(name),
+          )
+        end
+        allow(Homebrew::API::Internal).to receive(:formula_tap_git_head).and_return("")
+        allow(Homebrew::API::Formula).to receive(:all_aliases).and_return({})
         allow(CoreTap.instance).to receive(:tap_migrations).and_return({})
         allow(CoreCaskTap.instance).to receive(:tap_migrations).and_return({})
 
@@ -523,15 +603,36 @@ RSpec.describe Formulary do
         end.to raise_error("Cannot build from source from abstract formula.")
       end
 
-      it "returns a Formula that can regenerate its JSON API" do
+      it "returns a Formula loaded from the internal API" do
         allow(Homebrew::API::Formula).to receive(:all_formulae).and_return formula_json_contents
 
         formula = described_class.factory(formula_name)
         expect(formula).to be_a(Formula)
         expect(formula.loaded_from_api?).to be true
+        expect(formula.loaded_from_internal_api?).to be true
+      end
 
-        expected_hash = formula_json_contents[formula_name]
-        expect(formula.to_hash_with_variations).to eq(expected_hash)
+      it "loads patches from API JSON" do
+        allow(Homebrew::API::Formula).to receive(:all_formulae).and_return formula_json_contents(
+          "patches" => [
+            {
+              "strip"    => "p1",
+              "url"      => "https://example.com/test.patch",
+              "sha256"   => TEST_SHA256,
+              "resolves" => [
+                { "type" => "security", "id" => "CVE-2024-1234" },
+                { "type" => "defect", "id" => "https://github.com/foo/bar/issues/1" },
+              ],
+            },
+          ],
+        )
+
+        formula = described_class.factory(formula_name)
+
+        expect(formula.patchlist.first).to be_a(ExternalPatch).and have_attributes(resolves: [
+          "CVE-2024-1234",
+          "https://github.com/foo/bar/issues/1",
+        ])
       end
 
       it "returns a deprecated Formula when given a name" do
@@ -633,6 +734,8 @@ RSpec.describe Formulary do
         let(:foo_tap) { Tap.fetch("homebrew", "foo") }
 
         before do
+          allow(Homebrew::API)
+            .to receive_messages(formula_names: [formula_name], formula_aliases: {}, formula_renames: {})
           allow(Homebrew::API::Formula).to receive(:all_formulae).and_return formula_json_contents
           foo_tap.path.mkpath
         end
@@ -647,8 +750,8 @@ RSpec.describe Formulary do
             { "#{old_formula_name}": "homebrew/core/#{formula_name}" }
           JSON
 
-          loader = described_class::FromNameLoader.try_new(old_formula_name)
-          expect(loader).to be_a(described_class::FromAPILoader)
+          loader = Formulary::FromNameLoader.try_new(old_formula_name)
+          expect(loader).to be_a(Formulary::FromAPILoader)
           expect(loader.name).to eq formula_name
           expect(loader.path).not_to exist
         end
@@ -659,8 +762,8 @@ RSpec.describe Formulary do
             { "#{old_formula_name}": "homebrew/core/#{formula_name}" }
           JSON
 
-          loader = described_class::FromTapLoader.try_new("#{foo_tap}/#{old_formula_name}")
-          expect(loader).to be_a(described_class::FromAPILoader)
+          loader = Formulary::FromTapLoader.try_new("#{foo_tap}/#{old_formula_name}")
+          expect(loader).to be_a(Formulary::FromAPILoader)
           expect(loader.name).to eq formula_name
           expect(loader.path).not_to exist
         end
@@ -738,6 +841,27 @@ RSpec.describe Formulary do
         described_class.to_rack("a/b/#{formula_name}")
       end.to raise_error(TapFormulaUnavailableError)
     end
+
+    it "locates an installed Rack from an untrusted tap without evaluating its formula" do
+      tap = Tap.fetch("untrustedrack", "foo")
+      formula_path = tap.formula_dir/"#{formula_name}.rb"
+      formula_path.dirname.mkpath
+      eval_marker = mktmpdir/"evaluated"
+      formula_path.write <<~RUBY
+        class #{described_class.class_s(formula_name)} < Formula
+          url "https://brew.sh/#{formula_name}-1.0.tar.gz"
+          File.write("#{eval_marker}", "evaluated")
+        end
+      RUBY
+      rack_path.mkpath
+
+      with_env(HOMEBREW_REQUIRE_TAP_TRUST: "1", HOMEBREW_USER_CONFIG_HOME: mktmpdir) do
+        expect(described_class.to_rack("#{tap.name}/#{formula_name}")).to eq(rack_path)
+        expect(eval_marker).not_to exist
+      end
+    ensure
+      FileUtils.rm_rf HOMEBREW_TAP_DIRECTORY/"untrustedrack"
+    end
   end
 
   describe "::core_path" do
@@ -745,6 +869,15 @@ RSpec.describe Formulary do
       name = "foo-bar"
       expect(described_class.core_path(name))
         .to eq(Pathname.new("#{HOMEBREW_LIBRARY}/Taps/homebrew/homebrew-core/Formula/#{name}.rb"))
+    end
+
+    it "returns the sharded path directly for API-known formulae" do
+      ENV.delete("HOMEBREW_NO_INSTALL_FROM_API")
+      name = "foo-bar"
+      allow(Homebrew::API::Internal).to receive(:formula_hashes_cached?).and_return(true)
+      allow(Homebrew::API).to receive(:formula_name?).with(name).and_return(true)
+      expect(described_class.core_path(name))
+        .to eq(Pathname.new("#{HOMEBREW_LIBRARY}/Taps/homebrew/homebrew-core/Formula/f/#{name}.rb"))
     end
   end
 
@@ -768,6 +901,8 @@ RSpec.describe Formulary do
     context "when not using the API", :no_api do
       context "when a formula is migrated" do
         let(:token) { "foo" }
+        let(:old_tap) { core_tap }
+        let(:new_tap) { core_cask_tap }
 
         let(:core_tap) { CoreTap.instance }
         let(:core_cask_tap) { CoreCaskTap.instance }
@@ -782,6 +917,7 @@ RSpec.describe Formulary do
           old_tap.path.mkpath
           new_tap.path.mkpath
           (old_tap.path/"tap_migrations.json").write tap_migrations.to_json
+          old_tap.clear_cache
         end
 
         context "to a cask in the default tap" do
@@ -795,12 +931,10 @@ RSpec.describe Formulary do
             FileUtils.touch cask_file
           end
 
-          it "warn only once" do
+          it "does not warn when loading the short token" do
             expect do
               described_class.loader_for(token)
-            end.to output(
-              a_string_including("Warning: Formula #{token} was renamed to #{new_tap}/#{token}.").once,
-            ).to_stderr
+            end.not_to output.to_stderr
           end
         end
 
@@ -845,10 +979,31 @@ RSpec.describe Formulary do
           #
           #   it "stops recursing" do
           #     expect do
-          #       described_class.loader_for("#{new_tap}/#{token}")
+          #       klass.loader_for("#{new_tap}/#{token}")
           #     end.not_to output.to_stderr
           #   end
           # end
+        end
+
+        context "to a cask in a third-party tap" do
+          let(:old_tap) { Tap.fetch("another", "foo") }
+          let(:new_tap) { Tap.fetch("another", "bar") }
+          let(:cask_file) { new_tap.cask_dir/"#{token}.rb" }
+
+          before do
+            new_tap.cask_dir.mkpath
+            FileUtils.touch cask_file
+          end
+
+          after do
+            FileUtils.rm_rf HOMEBREW_TAP_DIRECTORY/"another"
+          end
+
+          it "does not warn when loading the short token" do
+            expect do
+              described_class.loader_for(token)
+            end.not_to output.to_stderr
+          end
         end
 
         context "to a third-party tap" do
@@ -875,6 +1030,14 @@ RSpec.describe Formulary do
             ).to_stderr
           end
 
+          it "warns with the canonical token when loading an uppercase short token" do
+            expect do
+              described_class.loader_for(token.upcase)
+            end.to output(
+              a_string_including("Formula #{old_tap}/#{token} was renamed to #{new_tap}/#{token}.").once,
+            ).to_stderr
+          end
+
           it "does not warn when loading the full token in the new tap" do
             expect do
               described_class.loader_for("#{new_tap}/#{token}")
@@ -893,4 +1056,3 @@ RSpec.describe Formulary do
     end
   end
 end
-# rubocop:enable RSpec/AggregateExamples

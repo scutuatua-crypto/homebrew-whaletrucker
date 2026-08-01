@@ -1,10 +1,11 @@
-# When bumping, run `brew vendor-gems --update=--ruby`
-# When bumping to a new major/minor version, also update the bounds in the Gemfile
+# When bumping, run `brew vendor-gems --update=--ruby`.
+# When bumping to a new major/minor version, also update the bounds in the Gemfile.
+# Also make sure that vendored gems have been committed for the new Ruby version by updating .gitignore.
 # HOMEBREW_LIBRARY set by bin/brew
 # shellcheck disable=SC2154
-export HOMEBREW_REQUIRED_RUBY_VERSION="3.4"
-HOMEBREW_PORTABLE_RUBY_VERSION="$(cat "${HOMEBREW_LIBRARY}/Homebrew/vendor/portable-ruby-version")"
-export HOMEBREW_BUNDLER_VERSION="2.6.9"
+export HOMEBREW_REQUIRED_RUBY_VERSION="4.0"
+read -r HOMEBREW_PORTABLE_RUBY_VERSION <"${HOMEBREW_LIBRARY}/Homebrew/vendor/portable-ruby-version"
+export HOMEBREW_BUNDLER_VERSION="4.0.16"
 
 # Disable Ruby options we don't need.
 export HOMEBREW_RUBY_DISABLE_OPTIONS="--disable=gems,rubyopt"
@@ -92,7 +93,8 @@ setup-ruby-path() {
   local vendor_ruby_root
   local vendor_ruby_path
   local vendor_ruby_terminfo
-  local vendor_ruby_current_version
+  local bootsnap_gem_paths
+  local nullglob_enabled
   local ruby_exec
   local upgrade_fail
   local install_fail
@@ -116,7 +118,6 @@ If there's no Homebrew Portable Ruby available for your processor:
   vendor_ruby_root="${vendor_dir}/portable-ruby/current"
   vendor_ruby_path="${vendor_ruby_root}/bin/ruby"
   vendor_ruby_terminfo="${vendor_ruby_root}/share/terminfo"
-  vendor_ruby_current_version="$(readlink "${vendor_ruby_root}")"
 
   unset HOMEBREW_RUBY_PATH
 
@@ -126,20 +127,23 @@ If there's no Homebrew Portable Ruby available for your processor:
   fi
 
   # Needed for `brew` and `odie`.
-  source "${HOMEBREW_LIBRARY}/Homebrew/utils/helpers.sh"
+  source "${HOMEBREW_LIBRARY}/Homebrew/utils.sh"
 
   if [[ -x "${vendor_ruby_path}" ]]
   then
     HOMEBREW_RUBY_PATH="${vendor_ruby_path}"
     TERMINFO_DIRS="${vendor_ruby_terminfo}"
-    if [[ "${vendor_ruby_current_version}" != "${HOMEBREW_PORTABLE_RUBY_VERSION}" ]]
+    # `-ef` (rather than `readlink`) to check the `current` symlink without a fork.
+    if ! [[ "${vendor_ruby_root}" -ef "${vendor_dir}/portable-ruby/${HOMEBREW_PORTABLE_RUBY_VERSION}" ]]
     then
       brew vendor-install ruby || odie "${upgrade_fail}"
     fi
-    HOMEBREW_BOOTSNAP_GEM_PATH="$(
-      shopt -s nullglob
-      echo "${vendor_ruby_root}"/lib/ruby/gems/*/gems/bootsnap-*/lib/bootsnap 2>/dev/null
-    )"
+    nullglob_enabled=""
+    shopt -q nullglob && nullglob_enabled="1"
+    shopt -s nullglob
+    bootsnap_gem_paths=("${vendor_ruby_root}"/lib/ruby/gems/*/gems/bootsnap-*/lib/bootsnap)
+    [[ -z "${nullglob_enabled}" ]] && shopt -u nullglob
+    HOMEBREW_BOOTSNAP_GEM_PATH="${bootsnap_gem_paths[*]-}"
   else
     if system_ruby_supported
     then
@@ -168,7 +172,7 @@ If there's no Homebrew Portable Ruby available for your processor:
     fi
   fi
 
-  homebrew_ruby_bin="$(dirname "${HOMEBREW_RUBY_PATH}")"
+  homebrew_ruby_bin="${HOMEBREW_RUBY_PATH%/*}"
   if [[ ! -f "${homebrew_ruby_bin}/bundle" ]]
   then
     "${homebrew_ruby_bin}/gem" install bundler -v "${HOMEBREW_BUNDLER_VERSION}"
