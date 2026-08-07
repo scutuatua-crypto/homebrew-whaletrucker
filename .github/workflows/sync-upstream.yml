@@ -42,7 +42,7 @@ jobs:
         run: |
           set -e
           BEFORE=$(git rev-parse HEAD)
-          git subtree pull --prefix=homebrew-core https://github.com/Homebrew/homebrew-core master --squash -m "chore: sync homebrew-core upstream"
+          git subtree pull --prefix=homebrew-core https://github.com/Homebrew/homebrew-core main --squash -m "chore: sync homebrew-core upstream"
           AFTER=$(git rev-parse HEAD)
           if [ "$BEFORE" != "$AFTER" ]; then
             echo "changed=true" >> $GITHUB_OUTPUT
