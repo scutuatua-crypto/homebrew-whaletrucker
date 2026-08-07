@@ -246,7 +246,7 @@ module Homebrew
         names = api_fetch_names(
           regex:   HOMEBREW_DEFAULT_TAP_FORMULA_REGEX,
           capture: :name,
-          hashes:  Homebrew::API::Internal.formula_hashes,
+          named:   ->(name) { Homebrew::API::Internal.formula_name?(name) },
           aliases: Homebrew::API::Internal.formula_aliases,
           renames: Homebrew::API::Internal.formula_renames,
         )
@@ -286,7 +286,7 @@ module Homebrew
         tokens = api_fetch_names(
           regex:   HOMEBREW_DEFAULT_TAP_CASK_REGEX,
           capture: :token,
-          hashes:  Homebrew::API::Internal.cask_hashes,
+          named:   ->(token) { Homebrew::API::Internal.cask_name?(token) },
           aliases: {},
           renames: Homebrew::API::Internal.cask_renames,
         )
@@ -325,12 +325,12 @@ module Homebrew
         params(
           regex:   Regexp,
           capture: Symbol,
-          hashes:  T::Hash[String, T::Hash[String, T.untyped]],
+          named:   T.proc.params(name: String).returns(T::Boolean),
           aliases: T::Hash[String, String],
           renames: T::Hash[String, String],
         ).returns(T.nilable(T::Array[String]))
       }
-      def api_fetch_names(regex:, capture:, hashes:, aliases:, renames:)
+      def api_fetch_names(regex:, capture:, named:, aliases:, renames:)
         requested_names = args.named.downcased_unique_named
         names = T.let(requested_names.filter_map do |requested_name|
           name = requested_name[regex, capture]
@@ -339,7 +339,7 @@ module Homebrew
           name = name.downcase
           name = aliases.fetch(name, name)
           name = renames.fetch(name, name)
-          next unless hashes.key?(name)
+          next unless named.call(name)
 
           name
         end, T::Array[String])

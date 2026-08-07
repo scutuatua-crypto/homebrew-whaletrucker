@@ -311,7 +311,7 @@ module Homebrew
                  "source"      => path_spec(source, base: source_base, default_base: @default_source_base),
                  "target"      => path_spec(target, base: target_base, default_base: @default_target_base),
                  "recursive"   => recursive,
-                 "overwrite"   => overwrite,
+                 "overwrite"   => (false unless overwrite),
                  "source_glob" => source_glob)
       end
 
@@ -382,8 +382,8 @@ module Homebrew
                                     default_base: @default_source_base),
                  "target"      => path_spec(target, base: target_base, formula: target_formula,
                                     default_base: @default_target_base),
-                 "force"       => force || overwrite,
-                 "uninstall"   => uninstall || remove_on_uninstall,
+                 "force"       => (true if force || overwrite),
+                 "uninstall"   => (true if uninstall || remove_on_uninstall),
                  "source_glob" => source_glob,
                  "sudo"        => sudo.is_a?(::Symbol) ? sudo.to_s : sudo)
       end
@@ -504,7 +504,7 @@ module Homebrew
         add_step("write",
                  "path"      => path_spec(path, base:, default_base: @default_base),
                  "content"   => content,
-                 "overwrite" => overwrite)
+                 "overwrite" => (true if overwrite))
       end
 
       sig {
@@ -641,7 +641,7 @@ module Homebrew
         add_step("set_ownership",
                  "paths"         => path_specs(paths, base:, default_base: @default_base),
                  "user"          => user,
-                 "group"         => group,
+                 "group"         => (group if group != "staff"),
                  "non_recursive" => !recursive)
       end
 
@@ -710,9 +710,9 @@ module Homebrew
 
         add_step("terminate_process",
                  "name"            => name,
-                 "match"           => match,
+                 "match"           => (match if match != "name"),
                  "sudo"            => sudo,
-                 "attempts"        => attempts,
+                 "attempts"        => (attempts if attempts != 1),
                  "must_succeed"    => must_succeed,
                  "notices"         => notices,
                  "failure_message" => failure_message)
@@ -1151,7 +1151,7 @@ module Homebrew
           ohai expand_template_tokens(notice)
         end
         name = expand_template_tokens(step_string(step, "name"))
-        if step_string(step, "match") == "full"
+        if step["match"] == "full"
           command = "/usr/bin/pkill"
           args = ["-f", name]
         else

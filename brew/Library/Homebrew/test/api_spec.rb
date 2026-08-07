@@ -41,7 +41,7 @@ RSpec.describe Homebrew::API do
 
   describe "::formula_name?" do
     before do
-      allow(Homebrew::API::Internal).to receive(:formula_hashes).and_return({ "foo" => {} })
+      allow(Homebrew::API::Internal).to receive(:formula_name?) { |name| name == "foo" }
     end
 
     it "returns true for a core formula name" do
@@ -55,7 +55,7 @@ RSpec.describe Homebrew::API do
 
   describe "::cask_token?" do
     before do
-      allow(Homebrew::API::Internal).to receive(:cask_hashes).and_return({ "foo" => {} })
+      allow(Homebrew::API::Internal).to receive(:cask_name?) { |token| token == "foo" }
     end
 
     it "returns true for a core cask token" do
@@ -316,7 +316,7 @@ RSpec.describe Homebrew::API do
     let(:formulae) { { "foo" => { "executables" => ["foo-bin"] } } }
 
     def write_executables_file!(regenerate:)
-      described_class.write_executables_file!(formulae, regenerate:, source:)
+      described_class.write_executables_file!(regenerate:, source:) { formulae }
     end
 
     before do

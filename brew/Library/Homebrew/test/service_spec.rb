@@ -1639,4 +1639,226 @@ RSpec.describe Homebrew::Service do
       end
     end
   end
+
+  describe "#effective_environment_variables" do
+    it "returns formula vars when no env override file exists" do
+      f = stub_formula do
+        service do
+          run opt_bin/"beanstalkd"
+          environment_variables FOO: "BAR"
+        end
+      end
+
+      vars = f.service.effective_environment_variables
+      expect(vars).to eq({ FOO: "BAR" })
+    end
+
+    it "merges user env overrides with formula vars" do
+      f = stub_formula do
+        service do
+          run opt_bin/"beanstalkd"
+          environment_variables FOO: "BAR"
+        end
+      end
+
+      with_env(HOMEBREW_USER_CONFIG_HOME: Dir.mktmpdir) do
+        services_dir = Pathname.new(ENV.fetch("HOMEBREW_USER_CONFIG_HOME")) / "services"
+        services_dir.mkpath
+        env_file = services_dir / "formula_name.env"
+        env_file.write <<~ENV
+          OLLAMA_HOST=0.0.0.0
+        ENV
+
+        vars = f.service.effective_environment_variables
+        expect(vars).to eq({ FOO: "BAR", OLLAMA_HOST: "0.0.0.0" })
+      end
+    end
+
+    it "user env overrides take precedence over formula vars" do
+      f = stub_formula do
+        service do
+          run opt_bin/"beanstalkd"
+          environment_variables FOO: "BAR"
+        end
+      end
+
+      with_env(HOMEBREW_USER_CONFIG_HOME: Dir.mktmpdir) do
+        services_dir = Pathname.new(ENV.fetch("HOMEBREW_USER_CONFIG_HOME")) / "services"
+        services_dir.mkpath
+        env_file = services_dir / "formula_name.env"
+        env_file.write <<~ENV
+          FOO=QUX
+        ENV
+
+        vars = f.service.effective_environment_variables
+        expect(vars).to eq({ FOO: "QUX" })
+      end
+    end
+
+    it "ignores comments and blank lines in env file" do
+      f = stub_formula do
+        service do
+          run opt_bin/"beanstalkd"
+          environment_variables FOO: "BAR"
+        end
+      end
+
+      with_env(HOMEBREW_USER_CONFIG_HOME: Dir.mktmpdir) do
+        services_dir = Pathname.new(ENV.fetch("HOMEBREW_USER_CONFIG_HOME")) / "services"
+        services_dir.mkpath
+        env_file = services_dir / "formula_name.env"
+        env_file.write <<~ENV
+          # This is a comment
+
+          OLLAMA_HOST=0.0.0.0
+          # Another comment
+          OLLAMA_ORIGINS=*
+        ENV
+
+        vars = f.service.effective_environment_variables
+        expect(vars).to eq({ FOO: "BAR", OLLAMA_HOST: "0.0.0.0", OLLAMA_ORIGINS: "*" })
+      end
+    end
+
+    it "skips lines without = and strips whitespace around =" do
+      f = stub_formula do
+        service do
+          run opt_bin/"beanstalkd"
+        end
+      end
+
+      with_env(HOMEBREW_USER_CONFIG_HOME: Dir.mktmpdir) do
+        services_dir = Pathname.new(ENV.fetch("HOMEBREW_USER_CONFIG_HOME")) / "services"
+        services_dir.mkpath
+        env_file = services_dir / "formula_name.env"
+        env_file.write <<~ENV
+          # comment
+          MALFORMED_LINE
+          FOO = BAR
+          BLANK_KEY = value
+          KEY_WITH_NO_VALUE
+          NORMAL=BAZ
+          KEY_EMPTY_VALUE=
+        ENV
+
+        expect { f.service.effective_environment_variables }
+          .to output(/invalid line.*MALFORMED_LINE/).to_stderr
+        expect { f.service.effective_environment_variables }
+          .to output(/invalid line.*KEY_WITH_NO_VALUE/).to_stderr
+        vars = f.service.effective_environment_variables
+        expect(vars).to eq({ FOO: "BAR", BLANK_KEY: "value", NORMAL: "BAZ", KEY_EMPTY_VALUE: "" })
+      end
+    end
+
+    it "includes user env overrides in to_plist" do
+      f = stub_formula do
+        service do
+          run [opt_bin/"beanstalkd", "test"]
+          environment_variables FOO: "BAR"
+        end
+      end
+
+      with_env(HOMEBREW_USER_CONFIG_HOME: Dir.mktmpdir) do
+        services_dir = Pathname.new(ENV.fetch("HOMEBREW_USER_CONFIG_HOME")) / "services"
+        services_dir.mkpath
+        env_file = services_dir / "formula_name.env"
+        env_file.write <<~ENV
+          OLLAMA_HOST=0.0.0.0
+        ENV
+
+        plist = f.service.to_plist
+        expect(plist).to include("<key>OLLAMA_HOST</key>")
+        expect(plist).to include("<string>0.0.0.0</string>")
+        expect(plist).to include("<key>FOO</key>")
+        expect(plist).to include("<string>BAR</string>")
+      end
+    end
+
+    it "includes user env overrides in to_systemd_unit" do
+      f = stub_formula do
+        service do
+          run opt_bin/"beanstalkd"
+          environment_variables FOO: "BAR"
+        end
+      end
+
+      with_env(HOMEBREW_USER_CONFIG_HOME: Dir.mktmpdir) do
+        services_dir = Pathname.new(ENV.fetch("HOMEBREW_USER_CONFIG_HOME")) / "services"
+        services_dir.mkpath
+        env_file = services_dir / "formula_name.env"
+        env_file.write <<~ENV
+          OLLAMA_HOST=0.0.0.0
+        ENV
+
+        unit = f.service.to_systemd_unit
+        expect(unit).to include("Environment=\"FOO=BAR\"")
+        expect(unit).to include("Environment=\"OLLAMA_HOST=0.0.0.0\"")
+      end
+    end
+
+    it "skips world-writable env files" do
+      f = stub_formula do
+        service do
+          run opt_bin/"beanstalkd"
+          environment_variables FOO: "BAR"
+        end
+      end
+
+      with_env(HOMEBREW_USER_CONFIG_HOME: Dir.mktmpdir) do
+        services_dir = Pathname.new(ENV.fetch("HOMEBREW_USER_CONFIG_HOME")) / "services"
+        services_dir.mkpath
+        env_file = services_dir / "formula_name.env"
+        env_file.write "OLLAMA_HOST=0.0.0.0"
+        File.chmod 0666, env_file
+
+        expect { f.service.effective_environment_variables }.to output(/world-writable/).to_stderr
+        vars = f.service.effective_environment_variables
+        expect(vars).to eq({ FOO: "BAR" })
+      end
+    end
+
+    it "skips group-writable env files" do
+      f = stub_formula do
+        service do
+          run opt_bin/"beanstalkd"
+          environment_variables FOO: "BAR"
+        end
+      end
+
+      with_env(HOMEBREW_USER_CONFIG_HOME: Dir.mktmpdir) do
+        services_dir = Pathname.new(ENV.fetch("HOMEBREW_USER_CONFIG_HOME")) / "services"
+        services_dir.mkpath
+        env_file = services_dir / "formula_name.env"
+        env_file.write "OLLAMA_HOST=0.0.0.0"
+        File.chmod 0664, env_file
+
+        expect { f.service.effective_environment_variables }.to output(/group-writable/).to_stderr
+        vars = f.service.effective_environment_variables
+        expect(vars).to eq({ FOO: "BAR" })
+      end
+    end
+
+    it "follows symlinks to a safe target" do
+      f = stub_formula do
+        service do
+          run opt_bin/"beanstalkd"
+          environment_variables FOO: "BAR"
+        end
+      end
+
+      with_env(HOMEBREW_USER_CONFIG_HOME: Dir.mktmpdir) do
+        services_dir = Pathname.new(ENV.fetch("HOMEBREW_USER_CONFIG_HOME")) / "services"
+        services_dir.mkpath
+        target = services_dir / "actual.env"
+        target.write "OLLAMA_HOST=0.0.0.0"
+        File.chmod 0644, target
+
+        symlink = services_dir / "formula_name.env"
+        File.symlink(target, symlink)
+
+        vars = f.service.effective_environment_variables
+        expect(vars).to eq({ FOO: "BAR", OLLAMA_HOST: "0.0.0.0" })
+      end
+    end
+  end
 end

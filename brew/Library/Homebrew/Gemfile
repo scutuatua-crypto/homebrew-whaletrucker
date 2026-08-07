@@ -79,7 +79,6 @@ group :audit, :bump_unversioned_casks, :livecheck, optional: true do
 end
 
 # vendored gems (no group)
-gem "base64"
 gem "concurrent-ruby"
 gem "patchelf"
 gem "plist"

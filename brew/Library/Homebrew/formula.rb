@@ -1574,7 +1574,7 @@ class Formula
 
   delegate pour_bottle_check_unsatisfied_reason: :"self.class"
 
-  # Can be overridden to run commands on both source and bottle installation.
+  # odeprecated
   sig { overridable.void }
   def post_install; end
 
@@ -1646,7 +1646,10 @@ class Formula
 
           with_logging("post_install") do
             run_post_install_steps if post_install_steps_defined?
-            post_install if post_install_defined?
+            if post_install_defined?
+              # odeprecated "`post_install`", "`post_install_steps`"
+              post_install
+            end
           end
         end
       end
@@ -4083,7 +4086,6 @@ class Formula
       current_steps.concat(
         if block
           Homebrew::InstallSteps::DSL.build(
-            default_base:        :var,
             default_source_base: :prefix,
             default_target_base: :prefix,
             &block

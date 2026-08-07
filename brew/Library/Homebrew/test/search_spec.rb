@@ -182,6 +182,12 @@ RSpec.describe Homebrew::Search do
 
       before do
         allow(Homebrew::API::Internal).to receive_messages(formula_hashes: api_formulae, cask_hashes: api_casks)
+        allow(Homebrew::API::Internal).to receive(:formula_names) { api_formulae.keys }
+        allow(Homebrew::API::Internal).to receive(:formula_name?) { |name| api_formulae.key?(name) }
+        allow(Homebrew::API::Internal).to receive(:formula_hash) { |name| api_formulae[name] }
+        allow(Homebrew::API::Internal).to receive(:cask_names) { api_casks.keys }
+        allow(Homebrew::API::Internal).to receive(:cask_name?) { |token| api_casks.key?(token) }
+        allow(Homebrew::API::Internal).to receive(:cask_hash) { |token| api_casks[token] }
       end
 
       it "searches formula descriptions" do

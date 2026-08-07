@@ -54,6 +54,8 @@ RSpec.describe Cask::CaskLoader::FromAPILoader, :cask do
                              cask_renames:        {},
                              cask_tap_migrations: {},
                              cask_tap_git_head:   internal_tap_git_head)
+      allow(Homebrew::API::Internal).to receive(:cask_name?) { |token| casks_from_internal_api_hash.key?(token) }
+      allow(Homebrew::API::Internal).to receive(:cask_hash) { |token| casks_from_internal_api_hash[token] }
 
       # The call to `Cask::CaskLoader.load` above sets the Tap cache prematurely.
       Tap.clear_cache

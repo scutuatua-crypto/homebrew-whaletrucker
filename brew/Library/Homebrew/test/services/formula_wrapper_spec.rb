@@ -66,6 +66,41 @@ RSpec.describe Homebrew::Services::FormulaWrapper, :needs_daemon_manager do
     end
   end
 
+  describe "#service_contents" do
+    it "macOS - generates the plist from the formula service block" do
+      allow(Homebrew::Services::System).to receive(:launchctl?).and_return(true)
+      allow(service).to receive(:service?).and_return(true)
+      allow(service_object).to receive_messages(command?: true, to_plist: "plist contents")
+
+      expect(service.service_contents).to eq("plist contents")
+    end
+
+    it "systemD - generates the unit from the formula service block" do
+      allow(Homebrew::Services::System).to receive_messages(launchctl?: false, systemctl?: true)
+      allow(service).to receive(:service?).and_return(true)
+      allow(service_object).to receive_messages(command?: true, to_systemd_unit: "unit contents")
+
+      expect(service.service_contents).to eq("unit contents")
+    end
+
+    it "reads the package-provided service file when the service block has no command" do
+      service_file = mktmpdir/"custom.name.plist"
+      service_file.write("package plist")
+      allow(service).to receive_messages(service?: true, service_file:)
+      allow(service_object).to receive(:command?).and_return(false)
+
+      expect(service.service_contents).to eq("package plist")
+    end
+
+    it "reads the package-provided service file when the formula has no service block" do
+      service_file = mktmpdir/"custom.name.plist"
+      service_file.write("package plist")
+      allow(service).to receive(:service_file).and_return(service_file)
+
+      expect(service.service_contents).to eq("package plist")
+    end
+  end
+
   describe "#service_name" do
     it "macOS - outputs the service name" do
       allow(Homebrew::Services::System).to receive(:launchctl?).and_return(true)

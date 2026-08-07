@@ -192,9 +192,9 @@ module Homebrew
       def self.write_names_and_aliases(regenerate: false)
         download_and_cache_data! unless cache.key?("formulae")
 
-        Homebrew::API.write_names_file!(all_formulae.keys, "formula", regenerate:)
-        Homebrew::API.write_aliases_file!(all_aliases, "formula", regenerate:)
-        Homebrew::API.write_executables_file!(all_formulae, regenerate:, source: cached_json_file_path)
+        Homebrew::API.write_names_file!("formula", regenerate:) { all_formulae.keys }
+        Homebrew::API.write_aliases_file!("formula", regenerate:) { all_aliases }
+        Homebrew::API.write_executables_file!(regenerate:, source: cached_json_file_path) { all_formulae }
       end
     end
   end

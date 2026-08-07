@@ -54,7 +54,10 @@ module Homebrew
       if defined?(Homebrew::API::Internal)
         instrument(Homebrew::API::Internal.singleton_class, :formula_struct, "api_metadata_load")
       end
-      instrument(Homebrew::Install.singleton_class, :formula_installers, "planning") if defined?(Homebrew::Install)
+      if defined?(Homebrew::Install)
+        instrument(Homebrew::Install.singleton_class, :formula_installers, "planning")
+        instrument(Homebrew::Install.singleton_class, :perform_preinstall_checks_once, "preinstall_checks")
+      end
       if defined?(FormulaInstaller)
         instrument(FormulaInstaller, :prelude, "planning")
         instrument(FormulaInstaller, :compute_dependencies, "dependency_resolution")

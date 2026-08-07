@@ -71,6 +71,14 @@ Homebrew/CompactBlank:
     # `blank?` is not necessarily available here:
     - "Homebrew/extend/enumerable.rb"
 
+Homebrew/NoBase64:
+  Description: "Use `String#unpack1` or `Array#pack` instead of the `base64` gem."
+  Include:
+    - "/**/{Formula,Casks}/**/*.rb"
+    - "**/{Formula,Casks}/**/*.rb"
+  Exclude:
+    - "Homebrew/test/**/*.rb"
+
 Homebrew/NoFileutilsRmrf:
   Include:
     - "/**/{Formula,Casks}/**/*.rb"

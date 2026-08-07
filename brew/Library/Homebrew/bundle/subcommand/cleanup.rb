@@ -23,13 +23,16 @@ module Homebrew
 
             This workflow is useful for maintainers or testers who regularly install lots of formulae.
 
+            When cleanup is performed, Homebrew's global trust store is reset to the trust values declared by the `Brewfile`, removing trust entries not declared there.
+
             Unless `--force` is passed, this prompts before removing anything and returns a 1 exit code if the prompt is declined or cannot be shown.
           EOS
           named_args :none
           switch "--install",
                  description: "Run `install` before cleaning up dependencies."
           switch "-f", "--force",
-                 description: "Actually perform cleanup operations."
+                 description: "Actually perform cleanup operations and reset Homebrew's global trust store " \
+                              "to the `Brewfile` values."
           switch "--all",
                  description: "Clean up all supported dependencies."
           switch "--formula", "--formulae", "--brews",

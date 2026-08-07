@@ -48,6 +48,7 @@ module Homebrew
         const :resource_versions, T::Array[ResourceVersionInfo], default: []
         const :repology_latest, T.any(String, Version)
         const :newer_than_upstream, T::Hash[Symbol, T::Boolean], default: {}
+        const :cooldown_skipped_versions, T::Hash[Symbol, Version], default: {}
         const :duplicate_pull_requests, T.nilable(T.any(T::Array[String], String))
         const :maybe_duplicate_pull_requests, T.nilable(T.any(T::Array[String], String))
       end
@@ -230,6 +231,7 @@ module Homebrew
         deprecated = {}
         current_versions = {}
         new_versions = {}
+        cooldown_skipped_versions = {}
 
         repology_latest = repositories.present? ? Repology.latest_version(repositories) : "not found"
         repology_latest_is_a_version = repology_latest.is_a?(Version)
@@ -271,7 +273,8 @@ module Homebrew
             deprecated[version_key] = loaded_formula_or_cask.deprecated?
             formula_or_cask_has_livecheck = loaded_formula_or_cask.livecheck_defined?
 
-            livecheck_latest = livecheck_result(loaded_formula_or_cask, current_version_value)
+            livecheck_latest, cooldown_skipped = livecheck_result(loaded_formula_or_cask, current_version_value)
+            cooldown_skipped_versions[version_key] = cooldown_skipped if cooldown_skipped
             livecheck_latest_is_a_version = livecheck_latest.is_a?(Version)
 
             new_version_value = if (livecheck_latest_is_a_version &&
@@ -307,12 +310,17 @@ module Homebrew
           single_arch = arch_options[0]
           current_versions = { general: current_versions[single_arch] }
           new_versions = { general: new_versions[single_arch] }
+          cooldown_skipped_versions = { general: cooldown_skipped_versions[single_arch] }.compact
         else
           if current_versions[:arm].present? && current_versions[:arm] == current_versions[:intel]
             current_versions = { general: current_versions[:arm] }
           end
           if new_versions[:arm].present? && new_versions[:arm] == new_versions[:intel]
             new_versions = { general: new_versions[:arm] }
+          end
+          if cooldown_skipped_versions[:arm].present? &&
+             cooldown_skipped_versions[:arm] == cooldown_skipped_versions[:intel]
+            cooldown_skipped_versions = { general: cooldown_skipped_versions[:arm] }
           end
         end
 
@@ -386,6 +394,7 @@ module Homebrew
           resource_versions:,
           repology_latest:,
           newer_than_upstream:,
+          cooldown_skipped_versions:,
           duplicate_pull_requests:,
           maybe_duplicate_pull_requests:,
         )
@@ -410,6 +419,7 @@ module Homebrew
         new_version = version_info.new_version
         repology_latest = version_info.repology_latest
         newer_than_upstream = version_info.newer_than_upstream
+        cooldown_skipped_version = version_info.cooldown_skipped_versions.values.max
         duplicate_pull_requests = version_info.duplicate_pull_requests
         maybe_duplicate_pull_requests = version_info.maybe_duplicate_pull_requests
 
@@ -418,7 +428,11 @@ module Homebrew
 
         title_name = ambiguous_cask ? "#{name} (cask)" : name
         title = if (repology_latest == current_version.general || !repology_latest.is_a?(Version)) && versions_equal
-          "#{title_name} #{Tty.green}is up to date!#{Tty.reset}"
+          if cooldown_skipped_version
+            "#{title_name} #{Tty.yellow}has a new version in release cooldown#{Tty.reset}"
+          else
+            "#{title_name} #{Tty.green}is up to date!#{Tty.reset}"
+          end
         else
           title_name
         end
@@ -446,11 +460,18 @@ module Homebrew
         end
 
         throttled = formula_or_cask.livecheck.throttle || formula_or_cask.livecheck.throttle_days
+        latest_versions = if cooldown_skipped_version
+          cooldown_days = Utils.pluralize("day", Homebrew::RELEASE_COOLDOWN_DAYS, include_count: true)
+          "#{cooldown_skipped_version} (released less than #{cooldown_days} ago)"
+        else
+          "#{new_versions}#{" (throttled)" if throttled}"
+        end
         ohai title
         puts <<~EOS
           Current #{version_info.version_name}  #{current_versions}
-          Latest livecheck version: #{new_versions}#{" (throttled)" if throttled}
+          Latest livecheck version: #{latest_versions}
         EOS
+        puts "Bump-ready version:       #{new_versions}" if cooldown_skipped_version
         puts <<~EOS unless skip_repology?(formula_or_cask)
           Latest Repology version:  #{repology_latest}
         EOS
@@ -851,11 +872,13 @@ module Homebrew
         end
       end
 
+      # Returns the new version (or a message string) and the newest upstream
+      # version skipped due to the release cooldown, if any.
       sig {
         params(
           formula_or_cask: T.any(Formula, Cask::Cask),
           current:         T.nilable(T.any(Version, Cask::DSL::Version)),
-        ).returns(T.any(Version, String))
+        ).returns([T.any(Version, String), T.nilable(Version)])
       }
       def livecheck_result(formula_or_cask, current)
         name = Livecheck.package_or_resource_name(formula_or_cask)
@@ -886,9 +909,9 @@ module Homebrew
           skip_status = skip_info[:status]
           skip_messages = skip_info[:messages]
           skip_message = skip_messages.join("; ") if skip_messages.present?
-          return "error: #{skip_message}" if skip_status == "error" && skip_message
+          return "error: #{skip_message}", nil if skip_status == "error" && skip_message
 
-          return "skipped - #{skip_message || skip_status}"
+          return "skipped - #{skip_message || skip_status}", nil
         end
 
         version_info = Livecheck.latest_version(
@@ -896,17 +919,20 @@ module Homebrew
           referenced_formula_or_cask:,
           json: true, full_name: false, verbose: true, debug: false
         )
-        return "unable to get versions" if version_info.blank?
+        return "unable to get versions", nil if version_info.blank?
 
         if !version_info.key?(:latest_throttled)
-          version_with_cooldown(version_info, current) || Version.new(version_info[:latest])
+          latest = Version.new(version_info[:latest])
+          cooldown_version = version_with_cooldown(version_info, current)
+          cooldown_skipped = (latest if cooldown_version && cooldown_version < latest)
+          [cooldown_version || latest, cooldown_skipped]
         elsif version_info[:latest_throttled].nil?
-          "unable to get throttled versions"
+          ["unable to get throttled versions", nil]
         else
-          Version.new(version_info[:latest_throttled])
+          [Version.new(version_info[:latest_throttled]), nil]
         end
       rescue => e
-        "error: #{e}"
+        ["error: #{e}", nil]
       end
 
       sig {

@@ -100,30 +100,74 @@ module Homebrew
       end
     end
 
-    sig { void }
-    def fetch
+    # Waits for and reports queued downloads. With `only:`, limits that to
+    # downloadables of the given class, leaving the rest enqueued and
+    # unreported for a later fetch, e.g. so dependency resolution can wait
+    # on bottle manifests without reporting in-flight bottles before their
+    # downloads heading has been printed. A `heading:` is printed only when
+    # there is something to report, so every report gets a heading and empty
+    # fetches stay silent. With `allow_failures:`, failures are still
+    # reported with a ✘ line but neither raise nor mark the fetch or run
+    # as failed, for metadata prefetches such as the bottle manifest of a
+    # version whose bottle has not been published yet, where dependency
+    # resolution just falls back to a full install; known-bad cached files
+    # from checksum mismatches are still removed.
+    sig {
+      params(only: T.nilable(T::Class[Downloadable]), heading: T.nilable(String),
+             allow_failures: T::Boolean).void
+    }
+    def fetch(only: nil, heading: nil, allow_failures: false)
       @fetch_failed = false
       @deferred_failure_messages = []
       context_before_fetch = Context.current
-      return if downloads.empty?
+      fetchable_downloads = if only
+        downloads.select { |downloadable, _| downloadable.is_a?(only) }
+      else
+        downloads
+      end
+      return if fetchable_downloads.empty?
+
+      if heading
+        if tty
+          oh1 heading, truncate: false
+          $stdout.flush
+        else
+          # Keep the heading off parsed stdout (e.g. `brew info --json | jq`)
+          # and on the same stream as the non-TTY report lines below.
+          $stderr.puts oh1_title(heading, truncate: false)
+        end
+      end
 
       if concurrency == 1
-        downloads.each do |downloadable, promise|
+        fetchable_downloads.each do |downloadable, promise|
           promise.wait!
         rescue CancelledDownloadError
           next
         rescue ChecksumMismatchError => e
+          if allow_failures
+            report_tolerated_failure(downloadable)
+            # Remove the known-bad download so it cannot be reused.
+            unlink_cached_download(downloadable)
+            next
+          end
+
           @fetch_failed = true
           ofail "#{downloadable.download_queue_type} reports different checksum: #{e.expected}"
+        rescue
+          raise unless allow_failures
+
+          report_tolerated_failure(downloadable)
         end
       else
-        message_length_max = downloads.keys.map { |download| download.download_queue_message.length }.max || 0
-        remaining_downloads = downloads.dup.to_a
+        message_length_max = fetchable_downloads.keys.map do |download|
+          download.download_queue_message.length
+        end.max || 0
+        remaining_downloads = fetchable_downloads.dup.to_a
         previous_pending_line_count = 0
         max_lines = [concurrency, Tty.height].min
 
         resolution = Concurrent::Event.new
-        downloads.each_value { |future| future.on_resolution! { resolution.set } }
+        fetchable_downloads.each_value { |future| future.on_resolution! { resolution.set } }
 
         begin
           stdout_print_and_flush_if_tty Tty.hide_cursor
@@ -141,7 +185,11 @@ module Homebrew
               $stderr.puts "#{status} #{message}"
             end
 
-            if future.rejected?
+            if future.rejected? && allow_failures
+              # Remove known-bad downloads so they cannot be reused, while
+              # staying non-fatal for tolerated metadata prefetches.
+              unlink_cached_download(downloadable) if exception.is_a?(ChecksumMismatchError)
+            elsif future.rejected?
               if exception.is_a?(ChecksumMismatchError)
                 @fetch_failed = true
                 actual = Digest::SHA256.file(downloadable.cached_download).hexdigest
@@ -152,8 +200,7 @@ module Homebrew
                   puts "#{expected_message} #{actual}"
                 end
               elsif exception.is_a?(CannotInstallFormulaError)
-                cached_download = downloadable.cached_download
-                cached_download.unlink if cached_download&.exist?
+                unlink_cached_download(downloadable)
                 raise exception
               elsif bottle_manifest_error?(downloadable, exception)
                 # Fatal: unlike a missing blob (which then fails to stage), a
@@ -250,9 +297,15 @@ module Homebrew
       # aborts the fetch above.
       Context.current = context_before_fetch if context_before_fetch
 
-      downloads.clear
-      @downloads_by_location.clear
-      @symlink_targets.clear
+      if only
+        # Keep unfetched downloads (and their location dedup entries) queued
+        # for the next fetch.
+        fetchable_downloads.each_key { |downloadable| downloads.delete(downloadable) }
+      else
+        downloads.clear
+        @downloads_by_location.clear
+        @symlink_targets.clear
+      end
     end
 
     sig { returns(T::Boolean) }
@@ -366,6 +419,24 @@ module Homebrew
       tty && !@dumb_tty
     end
 
+    sig { params(downloadable: Downloadable).void }
+    def unlink_cached_download(downloadable)
+      cached_download = downloadable.cached_download
+      cached_download.unlink if cached_download.exist?
+    end
+
+    # Matches the parallel-mode ✘ report for failures the serial path
+    # tolerates instead of raising.
+    sig { params(downloadable: Downloadable).void }
+    def report_tolerated_failure(downloadable)
+      status = if tty
+        "#{Tty.red}✘#{Tty.reset}"
+      else
+        "✘"
+      end
+      $stderr.puts "#{status} #{downloadable.download_queue_message}"
+    end
+
     sig { params(future: Concurrent::Promises::Future).returns(T.nilable(String)) }
     def status_from_future(future)
       case future.state
@@ -410,7 +481,7 @@ module Homebrew
       tty_width = Tty.width
       return message unless tty_width.positive?
 
-      available_width = tty_width - 2
+      available_width = tty_width - 3
       fetched_size = downloadable.fetched_size
       return message[0, available_width].to_s if fetched_size.blank?
 
@@ -486,6 +557,14 @@ module Homebrew
   sig { returns(DownloadQueue) }
   def self.default_download_queue
     @default_download_queue ||= T.let(DownloadQueue.new, T.nilable(DownloadQueue))
+  end
+
+  sig { void }
+  def self.reset_default_download_queue
+    # Skip `shutdown` for a leaked RSpec double, which cannot receive
+    # messages outside the per-example rspec-mocks lifecycle.
+    @default_download_queue.shutdown if @default_download_queue.is_a?(DownloadQueue)
+    @default_download_queue = nil
   end
 
   sig { void }

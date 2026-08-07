@@ -71,6 +71,28 @@ RSpec.describe Homebrew::DownloadQueue do
     expect(failure_index).to be > show_cursor_index
   end
 
+  it "fetches only downloads of the given class and keeps others queued unreported" do
+    manifest = instance_double(
+      Resource::BottleManifest,
+      cached_download:        HOMEBREW_CACHE/"downloads/testball_manifest.json",
+      checksum:               nil,
+      downloaded_and_valid?:  true,
+      downloader:             nil,
+      download_queue_message: "Bottle Manifest testball",
+      download_queue_name:    "testball",
+      download_queue_type:    "Bottle Manifest",
+    )
+    allow(manifest).to receive(:is_a?) { |klass| klass == Resource::BottleManifest }
+
+    download_queue.enqueue(manifest)
+    download_queue.enqueue(downloadable)
+
+    expect do
+      download_queue.fetch(only: Resource::BottleManifest)
+    end.to output(/Bottle Manifest testball/).to_stderr
+    expect(download_queue.downloads.keys).to eq [downloadable]
+  end
+
   it "raises and clears queue state on a bottle manifest failure in parallel mode" do
     allow(retryable_download).to receive(:fetch).and_raise(Resource::BottleManifest::Error.new("manifest missing"))
 
@@ -78,6 +100,53 @@ RSpec.describe Homebrew::DownloadQueue do
 
     expect { download_queue.fetch }.to raise_error(Resource::BottleManifest::Error, /manifest missing/)
     expect(download_queue.downloads).to be_empty
+  end
+
+  it "reports but tolerates failed downloads when failures are allowed" do
+    allow(retryable_download).to receive(:fetch).and_raise(Resource::BottleManifest::Error.new("manifest missing"))
+
+    download_queue.enqueue(downloadable)
+
+    expect { download_queue.fetch(allow_failures: true) }.to output(/✘/).to_stderr
+    expect(download_queue.fetch_failed).to be false
+    expect(Homebrew).not_to have_failed
+  end
+
+  it "tolerates failed downloads in serial mode when failures are allowed" do
+    allow(Homebrew::EnvConfig).to receive(:download_concurrency).and_return(1)
+    allow(retryable_download).to receive(:fetch).and_raise(Resource::BottleManifest::Error.new("manifest missing"))
+
+    download_queue.enqueue(downloadable)
+
+    expect { download_queue.fetch(allow_failures: true) }.to output(/✘/).to_stderr
+    expect(Homebrew).not_to have_failed
+  end
+
+  it "removes known-bad cached files for tolerated checksum mismatches" do
+    cached_download.dirname.mkpath
+    cached_download.write("corrupt")
+    allow(retryable_download).to receive(:fetch)
+      .and_raise(ChecksumMismatchError.new(cached_download, Checksum.new("aa" * 32), Checksum.new("bb" * 32)))
+
+    download_queue.enqueue(downloadable)
+
+    expect { download_queue.fetch(allow_failures: true) }.to output(/✘/).to_stderr
+    expect(cached_download).not_to exist
+    expect(Homebrew).not_to have_failed
+  end
+
+  it "removes known-bad cached files for tolerated checksum mismatches in serial mode" do
+    allow(Homebrew::EnvConfig).to receive(:download_concurrency).and_return(1)
+    cached_download.dirname.mkpath
+    cached_download.write("corrupt")
+    allow(retryable_download).to receive(:fetch)
+      .and_raise(ChecksumMismatchError.new(cached_download, Checksum.new("aa" * 32), Checksum.new("bb" * 32)))
+
+    download_queue.enqueue(downloadable)
+
+    expect { download_queue.fetch(allow_failures: true) }.to output(/✘/).to_stderr
+    expect(cached_download).not_to exist
+    expect(Homebrew).not_to have_failed
   end
 
   it "cancels remaining downloads and raises on a bottle manifest failure in serial mode" do
@@ -112,6 +181,24 @@ RSpec.describe Homebrew::DownloadQueue do
     ).to_stdout
   end
 
+  it "leaves the final terminal column empty when rendering progress" do
+    allow($stdout).to receive(:tty?).and_return(true)
+    ENV["TERM"] = "xterm-256color"
+    allow(Tty).to receive(:width).and_return(80)
+    allow(downloadable).to receive_messages(fetched_size: 559_300_000, total_size: 559_300_000, phase: :downloading)
+    allow(retryable_download).to receive(:fetch).and_return(cached_download)
+
+    download_queue.enqueue(downloadable)
+
+    rendered_lines = []
+    allow(download_queue).to receive(:stdout_print_and_flush) do |message|
+      rendered_lines << message if message.include?("559.3MB")
+    end
+    download_queue.fetch
+
+    expect(Tty.strip_ansi(rendered_lines.fetch(0)).chomp.each_grapheme_cluster.count).to eq(Tty.width - 1)
+  end
+
   it "emits no synchronized update sequences when stdout is not a TTY" do
     allow($stdout).to receive(:tty?).and_return(false)
     allow(retryable_download).to receive(:fetch).and_return(cached_download)
@@ -119,6 +206,38 @@ RSpec.describe Homebrew::DownloadQueue do
     download_queue.enqueue(downloadable)
 
     expect { download_queue.fetch }.not_to output(/\e\[\?2026/).to_stdout
+  end
+
+  it "prints the heading to stderr when stdout is not a TTY" do
+    allow($stdout).to receive(:tty?).and_return(false)
+    allow(retryable_download).to receive(:fetch).and_return(cached_download)
+    download_queue.enqueue(downloadable)
+
+    expect { download_queue.fetch(heading: "Downloading Homebrew API data") }
+      .to output(/^==> Downloading Homebrew API data$/).to_stderr
+  end
+
+  it "keeps the heading off stdout when stdout is not a TTY" do
+    allow($stdout).to receive(:tty?).and_return(false)
+    allow(retryable_download).to receive(:fetch).and_return(cached_download)
+    download_queue.enqueue(downloadable)
+
+    expect { download_queue.fetch(heading: "Downloading Homebrew API data") }
+      .not_to output(/Downloading Homebrew API data/).to_stdout
+  end
+
+  it "prints the heading to stdout on a TTY" do
+    allow($stdout).to receive(:tty?).and_return(true)
+    ENV["TERM"] = "xterm-256color"
+    allow(downloadable).to receive(:fetched_size).and_return(nil)
+    allow(retryable_download).to receive(:fetch).and_return(cached_download)
+
+    # Build the queue while stdout is a TTY so it captures the TTY render path,
+    # before the output matcher swaps $stdout to capture the heading.
+    download_queue.enqueue(downloadable)
+
+    expect { download_queue.fetch(heading: "Downloading Homebrew API data") }
+      .to output(/==>.*Downloading Homebrew API data/).to_stdout
   end
 
   it "wakes when downloads complete instead of polling with sleep" do
@@ -241,5 +360,25 @@ RSpec.describe Homebrew::DownloadQueue do
 
     download_queue.enqueue(bottle, check_attestation: true)
     download_queue.fetch
+  end
+
+  describe "Homebrew.default_download_queue", order: :defined do
+    it "memoizes the queue created on first use" do
+      queue = instance_double(described_class, shutdown: nil)
+      allow(described_class).to receive(:new).and_return(queue)
+
+      expect(Homebrew.default_download_queue).to be(queue)
+    end
+
+    it "does not leak a queue stubbed by an earlier example" do
+      expect(Homebrew.default_download_queue).to be_an_instance_of(described_class)
+    end
+
+    it "shuts down a memoized real queue when reset" do
+      queue = Homebrew.default_download_queue
+      expect(queue).to receive(:shutdown)
+
+      Homebrew.reset_default_download_queue
+    end
   end
 end

@@ -13,7 +13,11 @@ RSpec.describe Homebrew::DevCmd::Audit do
     let(:tap_path) { mktmpdir }
     let(:macos_only_cask_file) { tap_path/"Casks/macos-only-example.rb" }
     let(:linux_cask_file) { tap_path/"Casks/linux-example.rb" }
-    let(:tap) { instance_double(Tap, formula_files: [], cask_files: [macos_only_cask_file, linux_cask_file]) }
+    let(:linux_only_cask_file) { tap_path/"Casks/linux-only-example.rb" }
+    let(:tap) do
+      instance_double(Tap, formula_files: [], cask_files: [macos_only_cask_file, linux_cask_file,
+                                                           linux_only_cask_file])
+    end
 
     before do
       macos_only_cask_file.dirname.mkpath
@@ -22,11 +26,11 @@ RSpec.describe Homebrew::DevCmd::Audit do
           version "1.0"
           sha256 arm:   "0000000000000000000000000000000000000000000000000000000000000000",
                  intel: "1111111111111111111111111111111111111111111111111111111111111111"
-          url "https://example.invalid/x.pkg"
+          url "https://example.invalid/x-\#{version}.pkg"
           name "Example"
           desc "macOS-only cask"
           homepage "https://example.invalid/"
-          depends_on macos: ">= :ventura"
+          depends_on macos: :ventura
           binary "x"
         end
       RUBY
@@ -35,10 +39,23 @@ RSpec.describe Homebrew::DevCmd::Audit do
           version "1.0"
           sha256 arm:   "0000000000000000000000000000000000000000000000000000000000000000",
                  intel: "1111111111111111111111111111111111111111111111111111111111111111"
-          url "https://example.invalid/x.tar.gz"
+          url "https://example.invalid/x-\#{version}.tar.gz"
           name "Example"
           desc "Linux-supported cask"
           homepage "https://example.invalid/"
+          binary "x"
+        end
+      RUBY
+      linux_only_cask_file.write <<~RUBY
+        cask "linux-only-example" do
+          version "1.0"
+          sha256 arm64_linux:  "0000000000000000000000000000000000000000000000000000000000000000",
+                 x86_64_linux: "1111111111111111111111111111111111111111111111111111111111111111"
+          url "https://example.invalid/x-\#{version}.tar.gz"
+          name "Example"
+          desc "Linux-only cask"
+          homepage "https://example.invalid/"
+          depends_on :linux
           binary "x"
         end
       RUBY
@@ -59,6 +76,12 @@ RSpec.describe Homebrew::DevCmd::Audit do
       Homebrew::SimulateSystem.with(os: :linux) do
         expect { audit.run }.to output(problems).to_stdout
                                                 .and output(/1 problem in 1 cask detected/).to_stderr
+      end
+    end
+
+    it "audits Linux-only casks under Linux when running on macOS" do
+      Homebrew::SimulateSystem.with(os: :macos) do
+        expect { audit.run }.not_to output.to_stdout
       end
     end
   end

@@ -398,6 +398,21 @@ EOWARN
   trap - SIGINT
 }
 
+api_curl_download() {
+  local json_url="$1"
+  local cache_path="$2"
+  shift 2
+
+  curl \
+    "${CURL_DISABLE_CURLRC_ARGS[@]}" \
+    --fail --compressed --silent \
+    --speed-limit "${HOMEBREW_CURL_SPEED_LIMIT}" --speed-time "${HOMEBREW_CURL_SPEED_TIME}" \
+    --location --remote-time --output "${cache_path}" \
+    "$@" \
+    --user-agent "${HOMEBREW_USER_AGENT_CURL}" \
+    "${json_url}"
+}
+
 fetch_api_file() {
   local filename="$1"
   local update_failed_file="$2"
@@ -427,7 +442,8 @@ fetch_api_file() {
     echo "Checking if we need to fetch ${filename}..."
   fi
 
-  local arg json_url last_json_url
+  local arg curl_exit_code json_url last_json_url
+  local -a time_cond
   while read -r json_url
   do
     time_cond=()
@@ -435,15 +451,15 @@ fetch_api_file() {
     do
       time_cond+=("${arg}")
     done < <(api_time_cond_args "${cache_path}")
-    curl \
-      "${CURL_DISABLE_CURLRC_ARGS[@]}" \
-      --fail --compressed --silent \
-      --speed-limit "${HOMEBREW_CURL_SPEED_LIMIT}" --speed-time "${HOMEBREW_CURL_SPEED_TIME}" \
-      --location --remote-time --output "${cache_path}" \
-      "${time_cond[@]}" \
-      --user-agent "${HOMEBREW_USER_AGENT_CURL}" \
-      "${json_url}"
+    api_curl_download "${json_url}" "${cache_path}" "${time_cond[@]}"
     curl_exit_code=$?
+    # A conditional request can fail with a receive error (curl exit code 56) when
+    # an unconditional request for the same URL succeeds, so retry exactly once.
+    if [[ ${curl_exit_code} -eq 56 ]] && [[ ${#time_cond[@]} -gt 0 ]]
+    then
+      api_curl_download "${json_url}" "${cache_path}"
+      curl_exit_code=$?
+    fi
     last_json_url="${json_url}"
     [[ ${curl_exit_code} -eq 0 ]] && break
   done < <(api_urls "${filename}")
@@ -1051,13 +1067,16 @@ EOS
     rm -f "${HOMEBREW_CACHE}"/api/internal/formula.*.jws.json
     rm -f "${HOMEBREW_CACHE}"/api/internal/cask.*.jws.json
 
-    # Remove API files (and their `.payload` sidecars) from previous OS
-    # versions. Keep in sync with `cache_files` in Library/Homebrew/cleanup.rb.
+    # Remove API files (and their `.payload` and `.payload.index` sidecars)
+    # from previous OS versions, keeping the current OS's so `brew
+    # update-report`'s API data load stays or becomes prewarmed. Keep in
+    # sync with `cache_files` in Library/Homebrew/cleanup.rb.
     for f in "${HOMEBREW_CACHE}"/api/internal/packages.*.jws.json*
     do
       case "${f}" in
         "${HOMEBREW_CACHE}/api/internal/packages.$(bottle_tag).jws.json") ;;
         "${HOMEBREW_CACHE}/api/internal/packages.$(bottle_tag).jws.json.payload") ;;
+        "${HOMEBREW_CACHE}/api/internal/packages.$(bottle_tag).jws.json.payload.index") ;;
         *) rm -f "${f}" ;;
       esac
     done

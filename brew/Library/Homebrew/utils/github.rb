@@ -411,11 +411,11 @@ module GitHub
     EOS
     result = API.open_graphql(query, scopes: ["read:org", "user"])
 
-    if result["organization"]["teams"]["nodes"].blank?
-      raise API::Error,
-            "Your token needs the 'read:org' scope to access this API"
+    if result.dig("organization", "teams", "nodes").blank? || result.dig("organization", "team").blank?
+      raise API::Error, "Could not access the team #{org}/#{team}. " \
+                        "Please check that your GitHub account has access to the team and that your token has the " \
+                        "required permissions."
     end
-    raise API::Error, "The team #{org}/#{team} does not exist" if result["organization"]["team"].blank?
 
     result["organization"]["team"]["members"]["nodes"].to_h { |member| [member["login"], member["name"]] }
   end

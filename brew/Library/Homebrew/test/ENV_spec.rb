@@ -46,13 +46,14 @@ RSpec.describe "ENV" do
       end
 
       it "does not mutate the interface" do
-        expected = subject.methods
+        # Lazy-loaded gems may add methods to Hash without extending this object.
+        expected = subject.singleton_methods
 
         subject.with_build_environment do
-          expect(subject.methods).to eq(expected)
+          expect(subject.singleton_methods).to eq(expected)
         end
 
-        expect(subject.methods).to eq(expected)
+        expect(subject.singleton_methods).to eq(expected)
       end
     end
 
