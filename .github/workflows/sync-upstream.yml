@@ -37,12 +37,16 @@ jobs:
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Subtree pull homebrew-core
+      - name: Sync homebrew-core
         id: hbcore
         run: |
           set -e
           BEFORE=$(git rev-parse HEAD)
-          git subtree pull --prefix=homebrew-core https://github.com/Homebrew/homebrew-core main --squash -m "chore: sync homebrew-core upstream"
+          rm -rf /tmp/hbcore-upstream
+          git clone --depth 1 https://github.com/Homebrew/homebrew-core /tmp/hbcore-upstream
+          rsync -a --delete --exclude='.git' /tmp/hbcore-upstream/ homebrew-core/
+          git add homebrew-core/
+          git commit -m "chore: sync homebrew-core upstream" --quiet || true
           AFTER=$(git rev-parse HEAD)
           if [ "$BEFORE" != "$AFTER" ]; then
             echo "changed=true" >> $GITHUB_OUTPUT
