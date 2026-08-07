@@ -152,6 +152,11 @@ Uninstalling gcc... (1,914 files, 459.8MB)
 Uninstalled 1 formula
 ```
 
+Cleanup also makes Homebrew's global trust store match the selected `Brewfile`.
+It removes trust entries granted manually or by another `Brewfile` if they are
+not declared in the selected file. A `Brewfile` with no trust declarations
+removes every explicit trust entry.
+
 ### `brew bundle list`
 
 If you want to get a list of all the formulae in your `Brewfile`, you can use:
@@ -391,9 +396,12 @@ trusted `brew`, `cask` and whole-tap entries. It writes tap-level trust hashes
 for trusted formulae, casks and commands from a tap that are not otherwise
 present in the dumped `Brewfile`.
 
-When `brew bundle cleanup --force` runs, it resets Homebrew's tap trust file to
-the trust values declared by the `Brewfile` and removes trust entries that are
-not declared there.
+Whenever `brew bundle cleanup` performs cleanup, either because `--force` was
+passed or the confirmation prompt was accepted, it resets Homebrew's global
+trust store to the values declared by the selected `Brewfile`. This removes
+trust granted manually or by another `Brewfile` when it is not declared in the
+selected file. If the selected `Brewfile` has no trust declarations, every
+explicit trust entry is removed.
 
 ## Versions
 

@@ -96,6 +96,11 @@ module Homebrew
         replacement: "the default behaviour",
         odeprecated: true,
       },
+      HOMEBREW_AUTO_UPDATE_QUIET:                {
+        description: "If set, the auto-update run before commands like `brew install`, `brew upgrade` or " \
+                     "`brew tap` will not show information about new, outdated or deleted formulae and casks.",
+        boolean:     true,
+      },
       HOMEBREW_AUTO_UPDATE_SECS:                 {
         description:  "Run `brew update` once every `$HOMEBREW_AUTO_UPDATE_SECS` seconds before some commands, " \
                       "e.g. `brew install`, `brew upgrade` or `brew tap`. Alternatively, " \
@@ -658,7 +663,7 @@ module Homebrew
         default:     true,
       },
       HOMEBREW_SANDBOX_LINUX:                    {
-        description: "The `bwrap`(1) sandbox is the default for formula installation and testing " \
+        description: "The Landlock sandbox is the default for formula installation and testing " \
                      "on Linux unless `$HOMEBREW_NO_SANDBOX_LINUX` is set.",
         boolean:     :set,
         disabled_by: :HOMEBREW_NO_SANDBOX_LINUX,

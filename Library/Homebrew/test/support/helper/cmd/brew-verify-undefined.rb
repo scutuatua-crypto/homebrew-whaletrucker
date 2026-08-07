@@ -66,7 +66,6 @@ UNDEFINED_CONSTANTS_AFTER_REQUIRE = T.let({
   "downloadable"                  => %w[Concurrent],
   "extend/os/mac/extend/pathname" => %w[MachO],
   "formula_cellar_checks"         => %w[Plist],
-  "ignorable"                     => %w[Warnings],
   "keg"                           => %w[MachO],
   "livecheck/livecheck"           => %w[Addressable],
   "os/mac/xcode"                  => %w[Plist],

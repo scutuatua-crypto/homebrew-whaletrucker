@@ -4,6 +4,26 @@
 RSpec.describe Cask::Config, :cask do
   subject(:config) { described_class.new }
 
+  describe "#initialize" do
+    it "defines all instance variables in a consistent order" do
+      configs = [
+        described_class.new,
+        described_class.new(default: {}, env: {}, explicit: {}),
+      ]
+
+      expect(configs.map(&:instance_variables)).to all(eq([
+        :@default,
+        :@env,
+        :@explicit,
+        :@binarydir,
+        :@manpagedir,
+        :@bash_completion,
+        :@zsh_completion,
+        :@fish_completion,
+      ]))
+    end
+  end
+
   describe "::from_json" do
     it "deserializes a configuration in JSON format" do
       config = described_class.from_json <<~EOS

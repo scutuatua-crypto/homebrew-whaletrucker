@@ -57,9 +57,9 @@ module Cask
 
         unless skip_prefetch
           Homebrew::Install.enqueue_cask_installers(cask_installers, download_queue:)
-          oh1 "Fetching downloads for: #{casks.map { |cask| Formatter.identifier(cask.full_name) }.to_sentence}",
-              truncate: false
-          download_queue.fetch
+          download_queue.fetch(
+            heading: Homebrew::Install.combined_fetch_downloads_heading(cask_names: casks.map(&:full_name)),
+          )
         end
       ensure
         download_queue.shutdown if created_download_queue

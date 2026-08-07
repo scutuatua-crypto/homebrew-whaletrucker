@@ -241,13 +241,13 @@ module Cask
           end
 
           fetchable_casks = upgradable_casks.map(&:last)
-          fetchable_casks_sentence = fetchable_casks.map { |cask| Formatter.identifier(cask.full_name) }.to_sentence
           Homebrew::Install.enqueue_cask_installers(fetchable_cask_installers,
                                                     download_queue: prefetch_download_queue)
-          if fetchable_casks.any?
-            oh1 "Fetching downloads for: #{fetchable_casks_sentence}", truncate: false
-            prefetch_download_queue.fetch
-          end
+          prefetch_download_queue.fetch(
+            heading: Homebrew::Install.combined_fetch_downloads_heading(
+              cask_names: fetchable_casks.map(&:full_name),
+            ),
+          )
         ensure
           prefetch_download_queue.shutdown if created_download_queue
         end

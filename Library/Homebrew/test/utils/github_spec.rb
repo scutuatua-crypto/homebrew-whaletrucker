@@ -4,6 +4,24 @@
 require "utils/github"
 
 RSpec.describe GitHub do
+  describe "::members_by_team" do
+    it "reports an inaccessible team without assuming the token scope is missing" do
+      allow(GitHub::API).to receive(:open_graphql).and_return({
+        "organization" => {
+          "teams" => { "nodes" => [] },
+          "team"  => nil,
+        },
+      })
+
+      expect { described_class.members_by_team("Homebrew", "maintainers") }
+        .to raise_error(
+          GitHub::API::Error,
+          "Could not access the team Homebrew/maintainers. Please check that your GitHub account has access to the " \
+          "team and that your token has the required permissions.",
+        )
+    end
+  end
+
   describe "::API.commit" do
     it "fetches the main branch commit by default" do
       commit = { "sha" => "abc123" }

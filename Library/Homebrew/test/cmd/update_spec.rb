@@ -35,6 +35,45 @@ RSpec.describe Homebrew::Cmd::Update do
     end
   end
 
+  it "retries a failed conditional API download without the time condition" do
+    cache_path = test_root/"cache/api/formula.jws.json"
+    requests_file = test_root/"requests.txt"
+    update_failed_file = test_root/"update_failed.txt"
+    setup_update_utils
+    cache_path.dirname.mkpath
+    cache_path.write "cached"
+
+    _stdout, stderr, status = run_update_shell(
+      <<~SH,
+        source "#{update_script}"
+        curl() {
+          if [[ "$*" == *"--time-cond"* ]]
+          then
+            echo conditional >> "#{requests_file}"
+            return 56
+          fi
+
+          echo unconditional >> "#{requests_file}"
+          printf fresh > "#{cache_path}"
+        }
+        fetch_api_file formula.jws.json "#{update_failed_file}"
+      SH
+      {
+        "HOMEBREW_API_DEFAULT_DOMAIN" => "https://formulae.example/api",
+        "HOMEBREW_API_DOMAIN"         => nil,
+        "HOMEBREW_CACHE"              => (test_root/"cache").to_s,
+        "HOMEBREW_CURL_SPEED_LIMIT"   => "100",
+        "HOMEBREW_CURL_SPEED_TIME"    => "5",
+        "HOMEBREW_LIBRARY"            => (test_root/"Library").to_s,
+        "HOMEBREW_USER_AGENT_CURL"    => "Homebrew/test",
+      },
+    )
+
+    expect([status.success?, stderr, requests_file.read, cache_path.read, update_failed_file.exist?]).to eq(
+      [true, "", "conditional\nunconditional\n", "fresh", false],
+    )
+  end
+
   it "passes all arguments through to delegated upgrades" do
     args_file = test_root/"brew-args.txt"
     brew_wrapper = test_root/"brew-wrapper"

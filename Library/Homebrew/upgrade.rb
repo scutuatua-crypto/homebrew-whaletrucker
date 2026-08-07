@@ -111,6 +111,7 @@ module Homebrew
               fi = create_formula_installer(
                 formula,
                 flags:,
+                download_queue:,
                 force_bottle:,
                 build_from_source_formulae:,
                 interactive:,
@@ -122,7 +123,6 @@ module Homebrew
                 quiet:,
                 verbose:,
               )
-              fi.download_queue = download_queue
               fi.fetch_bottle_tab(quiet: !debug, enqueue: true)
               fi
             rescue CannotInstallFormulaError => e
@@ -134,7 +134,8 @@ module Homebrew
             end
           end
 
-          download_queue.fetch
+          download_queue.fetch(only: Resource::BottleManifest, heading: "Downloading bottle manifests",
+                               allow_failures: true)
         ensure
           download_queue.shutdown
         end
@@ -511,7 +512,8 @@ module Homebrew
       end
 
       sig {
-        params(formula: Formula, flags: T::Array[String], force_bottle: T::Boolean,
+        params(formula: Formula, flags: T::Array[String], download_queue: Homebrew::DownloadQueue,
+               force_bottle: T::Boolean,
                build_from_source_formulae: T::Array[String], interactive: T::Boolean,
                keep_tmp: T::Boolean, debug_symbols: T::Boolean, force: T::Boolean,
                overwrite: T::Boolean, debug: T::Boolean, quiet: T::Boolean, verbose: T::Boolean).returns(FormulaInstaller)
@@ -519,6 +521,7 @@ module Homebrew
       def create_formula_installer(
         formula,
         flags:,
+        download_queue:,
         force_bottle: false,
         build_from_source_formulae: [],
         interactive: false,
@@ -555,6 +558,7 @@ module Homebrew
         FormulaInstaller.new(
           formula,
           **{
+            download_queue:,
             options:,
             link_keg:,
             installed_on_request:,

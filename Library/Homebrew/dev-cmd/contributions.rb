@@ -40,7 +40,8 @@ module Homebrew
         EOS
         comma_array "--user=",
                     description: "Specify a comma-separated list of GitHub usernames or email addresses to find " \
-                                 "contributions from. Omitting this flag searches Homebrew maintainers. " \
+                                 "contributions from. Omitting this flag searches Homebrew maintainers and " \
+                                 "requires access to the `Homebrew/maintainers` team. " \
                                  "With `--maintainer-report-csv`, only matching quarter-end Maintainers are included."
         comma_array "--repositories",
                     description: "Specify a comma-separated list of repositories to search. " \

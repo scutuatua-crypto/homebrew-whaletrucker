@@ -634,7 +634,7 @@ patch do
 end
 ```
 
-`resolves` records what the patch fixes: one or more CVE identifiers (`CVE-YYYY-NNNN`), GHSA identifiers (`GHSA-xxxx-xxxx-xxxx`) or issue/PR URLs. CVE identifiers are also inferred automatically from the patch `url`, `apply` paths and `file` path, so a Debian-style `CVE-2016-2399.patch` is picked up without an explicit `resolves`.
+`resolves` records what the patch fixes: one or more CVE identifiers (`CVE-YYYY-NNNN`), GHSA identifiers (`GHSA-xxxx-xxxx-xxxx`), OSV identifiers (`OSV-YYYY-NNNN`) or issue/PR URLs. CVE identifiers are also inferred automatically from the patch `url`, `apply` paths and `file` path, so a Debian-style `CVE-2016-2399.patch` is picked up without an explicit `resolves`.
 
 ```ruby
 patch do
@@ -1065,9 +1065,9 @@ end
 
 ### Running commands after installation
 
-Any initialisation steps that aren't necessarily part of the install process can be located in a `post_install` block, such as setup commands or data directory creation. This block can be re-run separately with `brew postinstall <formula>`.
+Formulae in official Homebrew taps must represent post-install work with [`post_install_steps`](/rubydoc/Formula.html#post_install_steps-class_method); new `post_install` methods are rejected. These steps can be re-run separately with `brew postinstall <formula>`, are stored in the JSON API and do not require downloading source formula Ruby. A `post_install_steps` block may only contain the supported step calls with literal arguments. It cannot call the wider formula DSL or arbitrary Ruby code. Homebrew executes the steps with the same post-install sandbox policy.
 
-For declarative post-install work, prefer [`post_install_steps`](/rubydoc/Formula.html#post_install_steps-class_method). These steps are stored in the JSON API and do not require evaluating formula Ruby. A `post_install_steps` block may only contain the supported step calls with literal arguments. It cannot call the wider formula DSL or arbitrary Ruby code. Homebrew executes the steps with the same sandbox policy as `post_install`.
+The legacy `post_install` method remains available temporarily for third-party tap compatibility, but is not an authoring interface for official formulae.
 
 ```ruby
 class Foo < Formula
@@ -1075,8 +1075,8 @@ class Foo < Formula
   url "https://example.com/foo-1.0.tar.gz"
 
   post_install_steps do
-    mkdir_p "log/foo"
-    touch "foo/state"
+    mkdir_p "log/foo", base: :var
+    touch "foo/state", base: :var
     move "default.conf", "foo/default.conf"
     symlink "cert.pem", "foo/cert.pem", source_base: :relative
   end
@@ -1084,42 +1084,37 @@ class Foo < Formula
 end
 ```
 
-During incremental conversions a formula may define both `post_install_steps`
-and `post_install`. The structured steps run first and `post_install` runs last
-for the remaining Ruby work. Remove `post_install` once all of its behaviour is
-represented by structured steps.
-
 #### File preparation steps
 
-`mkdir_p`, `touch`, `remove`, `inreplace`, `write_file`, `set_permissions` and guard paths default to paths relative to `var`. File steps with separate sources and targets default both to `prefix`. Use `base:`, `source_base:` or `target_base:` when a step needs another formula path such as `pkgetc`; use `source_base: :relative` for relative symlink sources.
+Specify `base:` for paths such as `var`, `etc` or `pkgetc`. File steps with separate source and target paths default those paths to `prefix`; use `source_base:` or `target_base:` to select another formula path and `source_base: :relative` for relative symlink sources.
 
-* `mkdir_p`: create a directory and any missing parents; example: `mkdir_p "log/foo"`.
-* `touch`: create or update a file timestamp; example: `touch "foo/state"`.
+* `mkdir_p`: create a directory and any missing parents; example: `mkdir_p "log/foo", base: :var`.
+* `touch`: create or update a file timestamp; example: `touch "foo/state", base: :var`.
 * `move`: move one file or directory; example: `move "default.conf", "foo/default.conf"`.
 * `move_contents`: move the contents of one directory into another; example: `move_contents "defaults", "foo/defaults"`.
 * `copy`: copy a file or, with `recursive: true`, a directory; example: `copy "default.conf", "foo/default.conf"`.
-* `remove`: remove one or more paths; example: `remove ["old.conf", "foo/*.bak"]`. Use `recursive: true` for directories.
-* `inreplace`: replace a string or regular expression in a file; example: `inreplace "foo.conf", "@PREFIX@", "{{HOMEBREW_PREFIX}}"`. Its `audit_result:` and `global:` options match the formula `inreplace` helper.
+* `remove`: remove one or more paths; example: `remove ["old.conf", "foo/*.bak"], base: :var`. Use `recursive: true` for directories.
+* `inreplace`: replace a string or regular expression in a file; example: `inreplace "foo.conf", "@PREFIX@", "{{HOMEBREW_PREFIX}}", base: :etc`. Its `audit_result:` and `global:` options match the formula `inreplace` helper.
 * `symlink`: create a symlink; example: `symlink "cert.pem", "foo/cert.pem", source_base: :relative`.
 * `symlink_tree`: recursively symlink a directory's contents while preserving real target directories.
 * `symlink_children`: symlink each direct child of a directory, optionally adding a `prefix:` or `suffix:`.
-* `set_permissions`: change existing path permissions; example: `set_permissions "foo", "0755"`.
+* `set_permissions`: change existing path permissions; example: `set_permissions "foo", "0755", base: :var`.
 * `change_dylib_id`: change one Mach-O dynamic library ID; pass the complete source and new ID, use `resolve_source: true` for a source symlink and wrap the step in `on_macos`.
 
 `move` and `copy` replace an existing target by default, matching the corresponding file helpers; pass `overwrite: false` to reject replacement. `symlink` preserves an existing target by default, so pass `overwrite: true` when replacement is intentional. `move` and `copy` accept `source_glob: true` when the glob must resolve to exactly one source; `symlink` accepts one or more matching sources. Path collections used by `remove` and `set_permissions` expand globs automatically. `remove` ignores missing paths and may additionally be restricted with `symlink_target_contains:` or `content_contains:`. It accepts `sudo: true` or `sudo: :if_needed` for paths requiring elevated permissions.
 
-Use `if_path_exists`, `unless_path_exists`, `on_macos` and `on_linux` blocks to guard one or more steps. A condition is evaluated once when its scope begins, so related steps make the same decision:
+Use `if_path_exists`, `unless_path_exists`, `on_macos` and `on_linux` blocks to guard one or more steps. Specify the guard path's `base:` explicitly. A condition is evaluated once when its scope begins, so related steps make the same decision:
 
 ```ruby
-unless_path_exists "foo/default.conf" do
-  mkdir_p "foo"
+unless_path_exists "foo/default.conf", base: :var do
+  mkdir_p "foo", base: :var
   copy "default.conf", "foo/default.conf"
 end
 ```
 
 #### Default config and template steps
 
-`write_file` atomically writes its exact literal content, replacing an existing file. It defaults to the same base as the other file preparation steps; pass `base:` (such as `base: :etc`) to target another formula path. Use `unless_path_exists` when a default file should preserve user edits across upgrades:
+`write_file` atomically writes its exact literal content, replacing an existing file. Specify its `base:`, such as `base: :etc`. Use `unless_path_exists` when a default file should preserve user edits across upgrades:
 
 ```ruby
 unless_path_exists "foo.conf", base: :etc do
@@ -1171,18 +1166,18 @@ Use the named actions below for formula families that share post-install algorit
 
 `init_data_dir` creates a database service data directory and runs a supported
 bootstrap command unless the directory already contains the default marker
-file. It defaults to paths relative to `var` and skips the bootstrap command in
-Homebrew's GitHub Actions jobs. It does not change permissions or ownership.
+file. Specify its `base:`, normally `base: :var`. It skips the bootstrap command
+in Homebrew's GitHub Actions jobs and does not change permissions or ownership.
 
 * `init_data_dir` with `using: :postgresql`: initialise PostgreSQL with
-  `initdb`; example: `init_data_dir "postgresql@16", using: :postgresql`.
+  `initdb`; example: `init_data_dir "postgresql@16", using: :postgresql, base: :var`.
   PostgreSQL defaults to `locale: "en_US.UTF-8"` and can set another locale,
-  for example `init_data_dir "postgresql@12", using: :postgresql, locale: "C"`.
+  for example `init_data_dir "postgresql@12", using: :postgresql, locale: "C", base: :var`.
 * `init_data_dir` with `using: :mysql`: initialise MySQL with
   `mysqld --initialize-insecure`; example:
-  `init_data_dir "mysql", using: :mysql`.
+  `init_data_dir "mysql", using: :mysql, base: :var`.
 * `init_data_dir` with `using: :mariadb`: initialise MariaDB with
-  `mysql_install_db`; example: `init_data_dir "mysql", using: :mariadb`.
+  `mysql_install_db`; example: `init_data_dir "mysql", using: :mariadb, base: :var`.
 
 `symlink_tree` recursively links a source directory's contents into a target
 directory, preserving existing real directories and skipping `.DS_Store` files.

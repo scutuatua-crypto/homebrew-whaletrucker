@@ -17,6 +17,7 @@ module Homebrew
     require "api/internal"
     require "api/formula_struct"
     require "api/cask_struct"
+    require "api/packages_index"
 
     extend Utils::Output::Mixin
 
@@ -176,7 +177,10 @@ module Homebrew
         end
         # Skip on insecure downloads: their pinned 1970 mtime would make the
         # source fingerprint ambiguous (and they always re-download anyway).
-        write_jws_payload_cache(target, json_data, source_stat:) if source_stat && !insecure_download
+        if source_stat && !insecure_download
+          write_jws_payload_cache(target, json_data, source_stat:)
+          write_jws_payload_index_cache(target, json_data, parsed: data, source_stat:)
+        end
         [data, !skip_download]
       else
         [json_data, !skip_download]
@@ -226,7 +230,7 @@ module Homebrew
       ENV["HOMEBREW_API_UPDATED"] = "1"
 
       begin
-        download_queue.fetch
+        download_queue.fetch(heading: "Downloading Homebrew API data")
       ensure
         download_queue.shutdown
       end
@@ -238,23 +242,26 @@ module Homebrew
       Homebrew::API::Internal.write_cask_names
     end
 
-    sig { params(names: T::Array[String], type: String, regenerate: T::Boolean).returns(T::Boolean) }
-    def self.write_names_file!(names, type, regenerate:)
+    sig { params(type: String, regenerate: T::Boolean, names: T.proc.returns(T::Array[String])).returns(T::Boolean) }
+    def self.write_names_file!(type, regenerate:, &names)
       names_path = HOMEBREW_CACHE_API/"#{type}_names.txt"
       if !names_path.exist? || regenerate
         names_path.unlink if names_path.exist?
-        names_path.write(names.sort.join("\n"))
+        names_path.write(yield.sort.join("\n"))
         return true
       end
 
       false
     end
 
-    sig { params(aliases: T::Hash[String, String], type: String, regenerate: T::Boolean).returns(T::Boolean) }
-    def self.write_aliases_file!(aliases, type, regenerate:)
+    sig {
+      params(type: String, regenerate: T::Boolean,
+             aliases: T.proc.returns(T::Hash[String, String])).returns(T::Boolean)
+    }
+    def self.write_aliases_file!(type, regenerate:, &aliases)
       aliases_path = HOMEBREW_CACHE_API/"#{type}_aliases.txt"
       if !aliases_path.exist? || regenerate
-        aliases_text = aliases.map do |alias_name, real_name|
+        aliases_text = yield.map do |alias_name, real_name|
           "#{alias_name}|#{real_name}"
         end
         aliases_path.unlink if aliases_path.exist?
@@ -267,12 +274,12 @@ module Homebrew
 
     sig {
       params(
-        formulae:   T::Hash[String, T::Hash[String, T.untyped]],
         regenerate: T::Boolean,
         source:     Pathname,
+        formulae:   T.proc.returns(T::Hash[String, T::Hash[String, T.untyped]]),
       ).returns(T::Boolean)
     }
-    def self.write_executables_file!(formulae, regenerate:, source:)
+    def self.write_executables_file!(regenerate:, source:, &formulae)
       executables_path = HOMEBREW_CACHE_API/"internal/executables.txt"
       # The file is derived only from the API data in `source`, so it stays
       # current until that file next changes or is revalidated.
@@ -283,7 +290,7 @@ module Homebrew
       end
       return false if !regenerate && executables_mtime && source_mtime && source_mtime <= executables_mtime
 
-      executables_lines = formulae.filter_map do |name, hash|
+      executables_lines = yield.filter_map do |name, hash|
         executables = T.cast(hash["executables"], T.nilable(T::Array[String]))
         next if executables.blank?
 
@@ -415,15 +422,48 @@ module Homebrew
       }
     end
 
+    # Returns the verified raw payload bytes, and the envelope stat they were
+    # validated against, for an internal packages endpoint served entirely
+    # from a fresh cached envelope's sidecar. Returns nil when a download,
+    # revalidation or envelope parse is needed instead.
+    sig {
+      params(endpoint: String, stale_seconds: T.nilable(Integer))
+        .returns(T.nilable([String, File::Stat]))
+    }
+    def self.cached_internal_packages_payload(endpoint, stale_seconds:)
+      target = HOMEBREW_CACHE_API/endpoint
+      return unless jws_payload_cacheable?(target)
+      return if !target.exist? || target.empty?
+      return unless skip_download?(target:, stale_seconds:)
+
+      source_stat = target.stat
+      payload = cached_jws_payload_string(target, source_stat:)
+      return if payload.nil?
+
+      [payload, source_stat]
+    rescue SystemCallError
+      nil
+    end
+
     # Loads the signed payload of a `.jws.json` file from the sidecar cache
     # written after a previous verification, if it still matches the file.
     # The signature is verified on every load; only re-parsing the much
     # larger envelope is skipped.
     sig { params(target: Pathname).returns(T.nilable(T.any(T::Array[T.untyped], T::Hash[String, T.untyped]))) }
     private_class_method def self.cached_jws_payload(target)
+      payload = cached_jws_payload_string(target, source_stat: target.stat)
+      return if payload.nil?
+
+      JSON.parse(payload, freeze: true)
+    rescue SystemCallError, JSON::ParserError
+      nil
+    end
+
+    sig { params(target: Pathname, source_stat: File::Stat).returns(T.nilable(String)) }
+    private_class_method def self.cached_jws_payload_string(target, source_stat:)
       return unless jws_payload_cacheable?(target)
 
-      expected_fingerprint = jws_source_fingerprint(target.stat)
+      expected_fingerprint = jws_source_fingerprint(source_stat)
 
       jws_payload_cache_path(target).open("rb") do |file|
         header_line = file.gets
@@ -442,10 +482,27 @@ module Homebrew
         payload = file.read.force_encoding(Encoding::UTF_8)
         next unless verify_jws_signature(protected_b64, signature_b64, payload).nil?
 
-        JSON.parse(payload, freeze: true)
+        payload
       end
     rescue SystemCallError, ArgumentError, JSON::ParserError
       nil
+    end
+
+    # Writes the packages byte-offset index beside the payload sidecar so
+    # later loads can parse only the entries they need.
+    sig {
+      params(target: Pathname, json_data: T.any(T::Array[T.untyped], T::Hash[String, T.untyped]),
+             parsed: T.any(String, T::Array[T.untyped], T::Hash[String, T.untyped]),
+             source_stat: File::Stat).void
+    }
+    private_class_method def self.write_jws_payload_index_cache(target, json_data, parsed:, source_stat:)
+      return unless jws_payload_cacheable?(target)
+      return unless json_data.is_a?(Hash)
+
+      payload = json_data["payload"]
+      return if !payload.is_a?(String) || !parsed.is_a?(Hash)
+
+      PackagesIndex.write!(target, payload:, parsed:, source_stat:)
     end
 
     sig {
@@ -504,12 +561,12 @@ module Homebrew
 
     sig { returns(T::Array[String]) }
     def self.formula_names
-      Homebrew::API::Internal.formula_hashes.keys
+      Homebrew::API::Internal.formula_names
     end
 
     sig { params(name: String).returns(T::Boolean) }
     def self.formula_name?(name)
-      Homebrew::API::Internal.formula_hashes.key?(name)
+      Homebrew::API::Internal.formula_name?(name)
     end
 
     sig { returns(T::Hash[String, String]) }
@@ -529,12 +586,12 @@ module Homebrew
 
     sig { returns(T::Array[String]) }
     def self.cask_tokens
-      Homebrew::API::Internal.cask_hashes.keys
+      Homebrew::API::Internal.cask_names
     end
 
     sig { params(token: String).returns(T::Boolean) }
     def self.cask_token?(token)
-      Homebrew::API::Internal.cask_hashes.key?(token)
+      Homebrew::API::Internal.cask_name?(token)
     end
 
     sig { returns(T::Hash[String, String]) }

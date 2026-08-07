@@ -48,12 +48,27 @@ RSpec.describe Homebrew::API::Cask::CaskStructGenerator do
       { foo:       ["arg1", "arg2"] },
       { bar:       ["arg1", "arg2", { kwarg1: "value1" }] },
       { baz:       [{ kwarg1: "value1" }] },
+      {
+        target:         "$HOMEBREW_PREFIX/share/zsh/site-functions/_foo",
+        zsh_completion: ["$APPDIR/Foo.app/Contents/Resources/completions/zsh/_foo"],
+      },
+      {
+        zsh_completion: ["$APPDIR/Bar.app/Contents/Resources/completions/zsh/_bar"],
+        target:         "$HOMEBREW_PREFIX/share/zsh/site-functions/_bar",
+      },
+      {
+        target: "/Applications/Bar.app",
+        app:    ["Foo.app", { target: "Bar.app" }],
+      },
     ]
     expected_output = [
       [:preflight, [], {}, Homebrew::API::CaskStruct::EMPTY_BLOCK],
       [:foo, ["arg1", "arg2"], {}, nil],
       [:bar, ["arg1", "arg2"], { kwarg1: "value1" }, nil],
       [:baz, [], { kwarg1: "value1" }, nil],
+      [:zsh_completion, ["$APPDIR/Foo.app/Contents/Resources/completions/zsh/_foo"], {}, nil],
+      [:zsh_completion, ["$APPDIR/Bar.app/Contents/Resources/completions/zsh/_bar"], {}, nil],
+      [:app, ["Foo.app"], { target: "Bar.app" }, nil],
     ]
     output = described_class.process_artifacts(input)
     expect(output).to eq expected_output

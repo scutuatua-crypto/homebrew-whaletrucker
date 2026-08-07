@@ -336,15 +336,16 @@ RSpec.describe Homebrew::Services::Cli do
       timer_file.write("timer")
       service = instance_double(
         Homebrew::Services::FormulaWrapper,
-        name:         "name",
-        service_name: "homebrew.name",
-        installed?:   true,
+        name:             "name",
+        service_name:     "homebrew.name",
+        installed?:       true,
         service_file:,
-        dest:         dest_dir/service_file.basename,
+        service_contents: "service",
+        dest:             dest_dir/service_file.basename,
         dest_dir:,
-        timed?:       true,
+        timed?:           true,
         timer_file:,
-        timer_dest:   dest_dir/timer_file.basename,
+        timer_dest:       dest_dir/timer_file.basename,
       )
 
       services_cli.install_service_file(service, nil)
@@ -354,10 +355,8 @@ RSpec.describe Homebrew::Services::Cli do
 
     context "when given `--sudo-service-user`" do
       let(:dest_dir) { mktmpdir }
-      let(:service) do
-        source_dir = mktmpdir
-        service_file = source_dir/"homebrew.test.plist"
-        service_file.write <<~XML
+      let(:plist_xml) do
+        <<~XML
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -371,13 +370,19 @@ RSpec.describe Homebrew::Services::Cli do
           </dict>
           </plist>
         XML
+      end
+      let(:service) do
+        source_dir = mktmpdir
+        service_file = source_dir/"homebrew.test.plist"
+        service_file.write(plist_xml)
         instance_double(
           Homebrew::Services::FormulaWrapper,
-          name:         "name",
-          service_name: "homebrew.test",
-          installed?:   true,
+          name:             "name",
+          service_name:     "homebrew.test",
+          installed?:       true,
           service_file:,
-          dest:         dest_dir/"homebrew.test.plist",
+          service_contents: plist_xml,
+          dest:             dest_dir/"homebrew.test.plist",
           dest_dir:,
         )
       end

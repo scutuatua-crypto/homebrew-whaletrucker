@@ -276,9 +276,6 @@ module Homebrew
 
         return if formulae.any? && installed_formulae.empty? && casks.empty?
 
-        Install.perform_preinstall_checks_once
-        Install.check_cc_argv(args.cc)
-
         formulae_installer = Install.formula_installers(
           installed_formulae,
           installed_on_request:       !args.as_dependency?,
@@ -305,14 +302,20 @@ module Homebrew
         )
 
         shared_download_queue = T.let(nil, T.nilable(Homebrew::DownloadQueue))
-        if !ask && !args.dry_run? && formulae_installer.any?
+        if !args.dry_run? && formulae_installer.any?
           shared_download_queue = Homebrew::DownloadQueue.new(pour: true)
+          # Start bottle manifest (and, once downloads are confirmed, bottle)
+          # transfers before the local-only work below.
           formulae_installer = Install.prelude_fetch_formulae(formulae_installer,
-                                                              download_queue: shared_download_queue)
+                                                              download_queue: shared_download_queue,
+                                                              metadata_only:  ask)
         end
 
-        dependants = begin
-          Upgrade.dependants(
+        begin
+          Install.perform_preinstall_checks_once
+          Install.check_cc_argv(args.cc)
+
+          dependants = Upgrade.dependants(
             installed_formulae,
             flags:                      args.flags_only,
             ask:                        ask,
@@ -328,28 +331,30 @@ module Homebrew
             verbose:                    args.verbose?,
             dry_run:                    args.dry_run?,
           )
-        # Ensure the early download queue is shut down on interrupts.
+
+          # Main block: if asking the user is enabled, show dry-run information.
+          if ask
+            shared_download_queue&.fetch(only: Resource::BottleManifest,
+                                         heading: "Downloading bottle manifests", allow_failures: true)
+            Install.ask_formulae(
+              formulae_installer,
+              dependants,
+              flags:                      args.flags_only,
+              force_bottle:               args.force_bottle?,
+              build_from_source_formulae: args.build_from_source_formulae,
+              interactive:                args.interactive?,
+              keep_tmp:                   args.keep_tmp?,
+              debug_symbols:              args.debug_symbols?,
+              force:                      args.force?,
+              debug:                      args.debug?,
+              quiet:                      args.quiet?,
+              verbose:                    args.verbose?,
+            )
+          end
+        # Ensure the early download queue is shut down on interrupts and declined prompts.
         rescue Exception # rubocop:disable Lint/RescueException
           shared_download_queue&.shutdown
           raise
-        end
-
-        # Main block: if asking the user is enabled, show dry-run information.
-        if ask
-          Install.ask_formulae(
-            formulae_installer,
-            dependants,
-            flags:                      args.flags_only,
-            force_bottle:               args.force_bottle?,
-            build_from_source_formulae: args.build_from_source_formulae,
-            interactive:                args.interactive?,
-            keep_tmp:                   args.keep_tmp?,
-            debug_symbols:              args.debug_symbols?,
-            force:                      args.force?,
-            debug:                      args.debug?,
-            quiet:                      args.quiet?,
-            verbose:                    args.verbose?,
-          )
         end
 
         if !args.dry_run? && (formulae_installer.any? || fetch_casks.any?)
@@ -359,10 +364,6 @@ module Homebrew
           begin
             Cask::Upgrade.show_upgrade_summary(
               upgrade_casks.map { |cask| "#{cask.full_name} #{cask.installed_version} -> #{cask.version}" },
-            )
-            Install.show_combined_fetch_downloads_heading(
-              formula_names: formulae_installer.map { |fi| fi.formula.name },
-              cask_names:    fetch_casks.map(&:full_name),
             )
 
             formulae_installer = Install.enqueue_formulae(formulae_installer, download_queue:)
@@ -386,7 +387,10 @@ module Homebrew
               Install.enqueue_cask_installers(fetch_cask_installers, download_queue:)
             end
 
-            download_queue.fetch
+            download_queue.fetch(heading: Install.combined_fetch_downloads_heading(
+              formula_names: formulae_installer.map { |fi| fi.formula.name },
+              cask_names:    fetch_casks.map(&:full_name),
+            ))
           ensure
             download_queue.shutdown
           end

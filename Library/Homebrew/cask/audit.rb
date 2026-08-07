@@ -492,6 +492,15 @@ module Cask
     end
 
     sig { void }
+    def audit_unnecessary_verified
+      return unless new_cask?
+      return unless cask.url
+      return unless verified_present?
+
+      add_error "the `verified` parameter has been deprecated; use the `url` stanza without it"
+    end
+
+    sig { void }
     def audit_generic_artifacts
       cask.artifacts.grep(Artifact::Artifact).each do |artifact|
         unless artifact.target.absolute?
@@ -683,6 +692,55 @@ module Cask
           Cask is deprecated because it failed Gatekeeper checks but all artifacts now pass!
           Remove the deprecate/disable stanza or update the deprecate/disable reason.
         EOS
+      end
+    end
+
+    sig { void }
+    def audit_artifact_case
+      return if (url = cask.url).nil?
+      return unless online?
+
+      odebug "Auditing artifact case"
+
+      extract_artifacts(include_manual_installers: true) do |artifacts, tmpdir|
+        artifacts.each do |artifact|
+          source = case artifact
+          when Artifact::Pkg, Artifact::Installer
+            artifact.path
+          else
+            artifact.source
+          end
+
+          source = if source.to_s.start_with?("#{cask.appdir}/")
+            Pathname(source.to_s.delete_prefix("#{cask.appdir}/"))
+          elsif source.absolute?
+            source.relative_path_from(cask.staged_path)
+          else
+            source
+          end
+
+          components = source.each_filename.to_a
+          current = tmpdir
+          on_disk = []
+          components.each do |component|
+            break unless current.directory?
+
+            children = current.children.map { |child| child.basename.to_s }
+            match = children.find { |name| name == component } ||
+                    children.find { |name| name.casecmp?(component) }
+            break if match.nil?
+
+            on_disk << match
+            current /= match
+          end
+
+          next if on_disk.length != components.length
+          next if on_disk == components
+
+          add_error "Artifact #{source} does not match the case of the extracted " \
+                    "#{File.join(on_disk)}; this fails on case-sensitive filesystems.",
+                    location: url.location
+        end
       end
     end
 
@@ -1318,6 +1376,11 @@ module Cask
     sig { returns(T.nilable(String)) }
     def domain
       URI(cask.url.to_s).host
+    end
+
+    sig { returns(T::Boolean) }
+    def verified_present?
+      cask.url&.verified.present?
     end
 
     sig { returns(Tap) }

@@ -311,6 +311,22 @@ RSpec.describe Homebrew::InstallSteps do
     expect((root/"var/remove.txt").read).to be_empty
   end
 
+  specify "omits install step runtime defaults" do
+    steps = Homebrew::InstallSteps::DSL.build(default_base:        :staged_path,
+                                              default_source_base: :staged_path,
+                                              default_target_base: :staged_path) do
+      copy "source", "target"
+      symlink "source", "target"
+      write "config", "content"
+      set_ownership "Example.app"
+      terminate_process "Example"
+    end
+
+    expect(steps).to all(satisfy do |step|
+      (step.keys & %w[attempts force group match overwrite uninstall]).empty?
+    end)
+  end
+
   specify "writes a default config file and preserves existing ones", :aggregate_failures do
     steps = Homebrew::InstallSteps::DSL.build(default_base: :var) do
       write "config/new.conf", "fresh"

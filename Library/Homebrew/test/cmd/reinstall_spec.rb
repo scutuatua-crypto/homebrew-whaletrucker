@@ -68,7 +68,6 @@ RSpec.describe Homebrew::Cmd::Reinstall do
     allow(Homebrew::Reinstall).to receive(:build_install_context).and_return(reinstall_context)
     allow(Homebrew::Upgrade).to receive(:dependants).and_return(dependants)
     allow(Homebrew::Install).to receive(:ask_formulae)
-    allow(Homebrew::Install).to receive(:show_combined_fetch_downloads_heading)
     allow(Homebrew::Install).to receive(:enqueue_formulae).and_return([formula_installer])
     allow(Homebrew::Install).to receive(:enqueue_cask_installers)
     allow(Cask::Installer).to receive(:new).and_return(instance_double(Cask::Installer))
