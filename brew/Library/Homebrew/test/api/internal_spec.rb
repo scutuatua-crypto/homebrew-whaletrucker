@@ -258,4 +258,48 @@ RSpec.describe Homebrew::API::Internal do
     cask_tap_migrations_output = described_class.cask_tap_migrations
     expect(cask_tap_migrations_output).to eq cask_tap_migrations
   end
+
+  describe "with a cached payload sidecar" do
+    let(:compact_payload) { JSON.generate(JSON.parse(packages_json)) }
+
+    before do
+      target = described_class.cached_packages_json_file_path
+      target.dirname.mkpath
+      target.write "envelope"
+      header = {
+        "protected"       => "protected",
+        "signature"       => "signature",
+        "source_size"     => target.stat.size,
+        "source_mtime_ns" => (target.stat.mtime.to_r * 1_000_000_000).to_i,
+      }
+      Pathname("#{target}.payload").write("#{JSON.generate(header)}\n#{compact_payload}")
+      allow(Homebrew::API).to receive(:verify_jws_signature).and_return(nil)
+      allow(Utils::Curl).to receive(:curl_download).and_raise("sidecar-served loads must not download")
+    end
+
+    it "builds an index on first load and serves formula structs from it afterwards" do
+      expect(described_class.formula_struct("foo")).to eq formula_structs.fetch("foo")
+      index_path = Homebrew::API::PackagesIndex.path_for(described_class.cached_packages_json_file_path)
+      expect(index_path).to exist
+
+      described_class.clear_cache
+      loaded_index = T.let(nil, T.untyped)
+      expect(Homebrew::API::PackagesIndex).to receive(:load).and_wrap_original do |original, *args, **kwargs|
+        loaded_index = original.call(*args, **kwargs)
+      end
+
+      expect(described_class.formula_struct("foo")).to eq formula_structs.fetch("foo")
+      expect(loaded_index).not_to be_nil
+      expect(described_class.formula_tap_git_head).to eq formula_tap_git_head
+      expect(described_class.formula_name?("bar")).to be true
+      expect(described_class.formula_name?("missing")).to be false
+    end
+
+    it "materialises full hashes from an index-served payload" do
+      described_class.formula_struct("foo")
+      described_class.clear_cache
+
+      expect(described_class.formula_hashes).to eq formula_hashes
+    end
+  end
 end

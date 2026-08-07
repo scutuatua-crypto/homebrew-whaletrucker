@@ -17,6 +17,12 @@ module Homebrew
 
           If `sudo` is passed, operate on `/Library/LaunchDaemons` or `/usr/lib/systemd/system` (started at boot).
           Otherwise, operate on `~/Library/LaunchAgents` or `~/.config/systemd/user` (started at login).
+
+          Environment variables can be added or overridden for a service by creating
+          `$HOMEBREW_USER_CONFIG_HOME/services/<formula>.env` (defaults to
+          `~/.homebrew/services/<formula>.env`). The file uses `KEY=value`
+          format, one per line; lines starting with `#` are comments. Changes take
+          effect on the next `brew services restart` and persist across upgrades.
         EOS
         flag   "--sudo-service-user=",
                description: "When run as root on macOS, run the service(s) as this user."

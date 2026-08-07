@@ -351,8 +351,45 @@ RSpec.describe Homebrew::Cmd::InstallCmd do
     allow(Homebrew.messages).to receive(:display_messages)
     expect(Homebrew::DownloadQueue).to receive(:new).ordered.and_return(download_queue)
     expect(formula_installer).to receive(:download_queue=).with(download_queue).ordered
-    expect(formula_installer).to receive(:prelude_fetch).ordered
+    expect(formula_installer).to receive(:prelude_fetch).with(no_args).ordered
     expect(Homebrew::Upgrade).to receive(:dependants).ordered.and_return(dependants)
+    expect(Homebrew::Install).to receive(:enqueue_formulae)
+      .with([formula_installer], download_queue:)
+      .ordered
+      .and_return([formula_installer])
+    expect(download_queue).to receive(:fetch).ordered
+    expect(download_queue).to receive(:shutdown).ordered
+
+    cmd.run
+  end
+
+  it "drains metadata-only prelude fetches before the dry-run plan when asking" do
+    cmd = described_class.new(["testball"])
+    download_queue = instance_double(Homebrew::DownloadQueue, shutdown:  nil,
+                                                              downloads: { instance_double(Downloadable) => nil })
+    formula = formula("testball") do
+      T.bind(self, T.class_of(Formula))
+      url "https://brew.sh/testball-0.1.tar.gz"
+    end
+    formula_installer = instance_double(FormulaInstaller, formula:)
+    dependants = Homebrew::Upgrade::Dependents.new(upgradeable: [], pinned: [], skipped: [])
+
+    allow(Tap).to receive_messages(with_formula_name: nil, with_cask_token: nil)
+    allow(Homebrew::Trust).to receive(:trust_fully_qualified_items!)
+    allow(cmd.args.named).to receive(:to_formulae_and_casks).with(warn: false).and_return([formula])
+    allow(Homebrew::Install).to receive(:perform_preinstall_checks_once)
+    allow(Homebrew::Install).to receive(:check_cc_argv)
+    allow(Homebrew::Install).to receive_messages(install_formula?: true, formula_installers: [formula_installer])
+    allow(Homebrew::Install).to receive(:install_formulae)
+    allow(Homebrew::Upgrade).to receive(:upgrade_dependents)
+    allow(Homebrew::Cleanup).to receive(:periodic_clean!)
+    allow(Homebrew.messages).to receive(:display_messages)
+    expect(Homebrew::DownloadQueue).to receive(:new).ordered.and_return(download_queue)
+    expect(formula_installer).to receive(:download_queue=).with(download_queue).ordered
+    expect(formula_installer).to receive(:prelude_fetch).with(metadata_only: true).ordered
+    expect(Homebrew::Upgrade).to receive(:dependants).ordered.and_return(dependants)
+    expect(download_queue).to receive(:fetch).ordered
+    expect(Homebrew::Install).to receive(:ask_formulae).ordered
     expect(Homebrew::Install).to receive(:enqueue_formulae)
       .with([formula_installer], download_queue:)
       .ordered
@@ -505,11 +542,12 @@ RSpec.describe Homebrew::Cmd::InstallCmd do
 
       true
     end
+    expect(download_queue).to receive(:fetch)
+      .with(heading: "Fetching downloads for: testball_bottle and codex")
 
     expect { cmd.run }.to output(<<~EOS).to_stdout
       ==> Upgrading 1 outdated package:
       codex 0.117.0 -> 0.118.0
-      ==> Fetching downloads for: testball_bottle and codex
     EOS
   end
 end

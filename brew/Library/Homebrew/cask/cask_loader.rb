@@ -456,7 +456,9 @@ module Cask
       sig { params(config: T.nilable(Config)).returns(Cask) }
       def load_from_internal_api(config:)
         cask_struct = Homebrew::API::Internal.cask_struct(token)
-        api_source = Homebrew::API::Internal.cask_hashes.fetch(token)
+        api_source = Homebrew::API::Internal.cask_hash(token)
+        raise KeyError, "key not found: #{token.inspect}" if api_source.nil?
+
         tap_git_head = Homebrew::API::Internal.cask_tap_git_head
 
         load_from_struct(config:, cask_struct:, api_source:, tap_git_head:, internal_api: true)

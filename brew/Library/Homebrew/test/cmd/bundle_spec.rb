@@ -100,6 +100,8 @@ RSpec.describe Homebrew::Cmd::Bundle do
     expect(subcommand_options.call("cleanup")["--no-mas"])
       .to include("`cleanup` without Mac App Store dependencies.")
     expect(subcommand_options.call("cleanup")["--all"]).to eq("Clean up all supported dependencies.")
+    expect(subcommand_options.call("cleanup")["--force"])
+      .to eq("Actually perform cleanup operations and reset Homebrew's global trust store to the `Brewfile` values.")
     expect(subcommand_options.call("dump")["--no-describe"]).to include("Description comments are the default")
     expect(subcommand_options.call("add")["--no-describe"]).to include("Description comments are the default")
     expect(subcommand_options.call("add")["--vscode"])

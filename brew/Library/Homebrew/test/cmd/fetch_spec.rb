@@ -32,10 +32,10 @@ RSpec.describe Homebrew::Cmd::FetchCmd do
     allow(download_queue).to receive(:enqueue) { |download| enqueued_downloads << download }
     allow(Homebrew::API::Internal).to receive_messages(
       formula_aliases: {},
-      formula_hashes:  { "fast-fetch" => {} },
       formula_renames: {},
       formula_struct:  formula_struct,
     )
+    allow(Homebrew::API::Internal).to receive(:formula_name?) { |name| name == "fast-fetch" }
 
     expect(cmd.args.named).not_to receive(:to_formulae_and_casks)
     expect(Formulary).not_to receive(:factory)
@@ -59,10 +59,10 @@ RSpec.describe Homebrew::Cmd::FetchCmd do
     allow(Homebrew::DownloadQueue).to receive(:new).and_return(download_queue)
     allow(download_queue).to receive(:enqueue) { |download| enqueued_downloads << download }
     allow(Homebrew::API::Internal).to receive_messages(
-      cask_hashes:  { "fast-cask" => {} },
       cask_renames: {},
       cask_struct:  cask_struct,
     )
+    allow(Homebrew::API::Internal).to receive(:cask_name?) { |token| token == "fast-cask" }
 
     expect(cmd.args.named).not_to receive(:to_formulae_and_casks)
     expect(Cask::CaskLoader).not_to receive(:load)

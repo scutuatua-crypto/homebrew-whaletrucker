@@ -110,22 +110,25 @@ module Cask
       ).void
     }
     def initialize(default: nil, env: nil, explicit: {}, ignore_invalid_keys: false)
-      if default
-        @default = T.let(
-          self.class.canonicalize(self.class.defaults.merge(default)),
-          T.nilable(ConfigHash),
-        )
-      end
-      if env
-        @env = T.let(
-          self.class.canonicalize(env),
-          T.nilable(ConfigHash),
-        )
-      end
+      # Define all instance variables in a consistent order so every instance
+      # shares one object shape, avoiding Ruby's shape-variation warning.
+      @default = T.let(
+        default ? self.class.canonicalize(self.class.defaults.merge(default)) : nil,
+        T.nilable(ConfigHash),
+      )
+      @env = T.let(
+        env ? self.class.canonicalize(env) : nil,
+        T.nilable(ConfigHash),
+      )
       @explicit = T.let(
         self.class.canonicalize(explicit),
         ConfigHash,
       )
+      @binarydir = T.let(nil, T.nilable(Pathname))
+      @manpagedir = T.let(nil, T.nilable(Pathname))
+      @bash_completion = T.let(nil, T.nilable(Pathname))
+      @zsh_completion = T.let(nil, T.nilable(Pathname))
+      @fish_completion = T.let(nil, T.nilable(Pathname))
 
       if ignore_invalid_keys
         @env&.delete_if { |key, _| self.class.defaults.keys.exclude?(key) }
@@ -164,27 +167,27 @@ module Cask
 
     sig { returns(Pathname) }
     def binarydir
-      @binarydir ||= T.let(HOMEBREW_PREFIX/"bin", T.nilable(Pathname))
+      @binarydir ||= HOMEBREW_PREFIX/"bin"
     end
 
     sig { returns(Pathname) }
     def manpagedir
-      @manpagedir ||= T.let(HOMEBREW_PREFIX/"share/man", T.nilable(Pathname))
+      @manpagedir ||= HOMEBREW_PREFIX/"share/man"
     end
 
     sig { returns(Pathname) }
     def bash_completion
-      @bash_completion ||= T.let(HOMEBREW_PREFIX/"etc/bash_completion.d", T.nilable(Pathname))
+      @bash_completion ||= HOMEBREW_PREFIX/"etc/bash_completion.d"
     end
 
     sig { returns(Pathname) }
     def zsh_completion
-      @zsh_completion ||= T.let(HOMEBREW_PREFIX/"share/zsh/site-functions", T.nilable(Pathname))
+      @zsh_completion ||= HOMEBREW_PREFIX/"share/zsh/site-functions"
     end
 
     sig { returns(Pathname) }
     def fish_completion
-      @fish_completion ||= T.let(HOMEBREW_PREFIX/"share/fish/vendor_completions.d", T.nilable(Pathname))
+      @fish_completion ||= HOMEBREW_PREFIX/"share/fish/vendor_completions.d"
     end
 
     sig { returns(T::Array[String]) }

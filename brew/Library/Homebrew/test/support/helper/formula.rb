@@ -13,7 +13,7 @@ module Test
       sig {
         params(
           name: String, path: T.nilable(Pathname), spec: Symbol, alias_path: T.nilable(Pathname),
-          tap: T.nilable(Tap), block: T.nilable(T.proc.bind(::Formula).void)
+          tap: T.nilable(Tap), block: T.nilable(T.proc.void)
         ).returns(::Formula)
       }
       def formula(name = "formula_name", path: nil, spec: :stable, alias_path: nil, tap: nil, &block)

@@ -13,6 +13,7 @@ module Homebrew
   class Service
     extend Forwardable
     include OnSystem::MacOSAndLinux
+    include Utils::Output::Mixin
     include Utils::Path
 
     RUN_TYPE_IMMEDIATE = :immediate
@@ -435,6 +436,57 @@ module Homebrew
       @environment_variables = variables.transform_values(&:to_s)
     end
 
+    # Returns the effective environment variables with user overrides merged
+    # in from `$HOMEBREW_USER_CONFIG_HOME/services/<formula>.env`.  User
+    # overrides take precedence over formula-defined variables.
+    sig { returns(T::Hash[Symbol, String]) }
+    def effective_environment_variables
+      env_vars = @environment_variables.dup
+
+      env_file = Pathname.new("#{ENV.fetch("HOMEBREW_USER_CONFIG_HOME")}/services/#{@formula.name}.env")
+      return env_vars unless env_file.file?
+
+      # User env overrides are not supported for root services.
+      # `sudo -E` can preserve a caller-controlled HOME, and TOCTOU
+      # between symlink resolution, permission checks, and reading makes
+      # it impossible to safely validate a user-owned override file when
+      # generating a root service definition.
+      if Process.euid.zero?
+        opoo "Skipping #{env_file}: user env overrides are not supported for root services."
+        return env_vars
+      end
+
+      if env_file.world_writable?
+        opoo "Skipping #{env_file}: file is world-writable."
+        return env_vars
+      end
+
+      if env_file.stat.mode.anybits?(020)
+        opoo "Skipping #{env_file}: file is group-writable."
+        return env_vars
+      end
+
+      # Read each line, strip whitespace, and remove blank lines and
+      # comments (lines starting with `#`). Then parse remaining lines
+      # as KEY=value pairs, warning on lines missing a `=` separator.
+      overrides = env_file.each_line
+                          .map(&:strip)
+                          .reject { |line| line.empty? || line.start_with?("#") }
+                          .each_with_object({}) do |line, hash|
+                            key, value = line.split("=", 2)
+                            if key.blank? || value.nil?
+                              opoo "Skipping invalid line in #{env_file}: #{line}"
+                              next
+                            end
+
+                            hash[key.strip] = value.strip
+                          end
+
+      overrides.each { |key, value| env_vars[key.to_sym] = value }
+
+      env_vars
+    end
+
     # Timers created by `launchd` jobs are coalesced unless this is set.
     #
     # @api public
@@ -496,11 +548,11 @@ module Homebrew
     # Returns the `String` command to run manually instead of the service.
     sig { returns(String) }
     def manual_command
-      vars = @environment_variables.except(:PATH)
-                                   .map { |k, v| "#{k}=\"#{v}\"" }
+      env_vars = effective_environment_variables.except(:PATH)
+                                                .map { |k, v| "#{k}=\"#{v}\"" }
 
-      vars.concat(command.map { |arg| Utils::Shell.sh_quote(arg) })
-      vars.join(" ")
+      env_vars.concat(command.map { |arg| Utils::Shell.sh_quote(arg) })
+      env_vars.join(" ")
     end
 
     # Returns a `Boolean` describing if a service is timed.
@@ -532,7 +584,9 @@ module Homebrew
       base[:StandardInPath] = File.expand_path(@input_path) if @input_path.present?
       base[:StandardOutPath] = File.expand_path(@log_path) if @log_path.present?
       base[:StandardErrorPath] = File.expand_path(@error_log_path) if @error_log_path.present?
-      base[:EnvironmentVariables] = @environment_variables unless @environment_variables.empty?
+      if (env_vars = effective_environment_variables).present?
+        base[:EnvironmentVariables] = env_vars
+      end
 
       if keep_alive?
         if (always = @keep_alive[:always].presence)
@@ -600,7 +654,11 @@ module Homebrew
       options << "StandardInput=file:#{File.expand_path(@input_path)}" if @input_path.present?
       options << "StandardOutput=append:#{File.expand_path(@log_path)}" if @log_path.present?
       options << "StandardError=append:#{File.expand_path(@error_log_path)}" if @error_log_path.present?
-      options += @environment_variables.map { |k, v| "Environment=\"#{k}=#{v}\"" } if @environment_variables.present?
+      if (env_vars = effective_environment_variables).present?
+        options += env_vars.map do |k, v|
+          "Environment=\"#{k}=#{v}\""
+        end
+      end
 
       <<~SYSTEMD
         [Unit]

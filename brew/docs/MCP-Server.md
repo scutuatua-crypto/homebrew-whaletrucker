@@ -22,7 +22,7 @@ Press Ctrl-D or Ctrl-C to terminate it.
 
 ## Configuration
 
-### Example configuration for [Cursor](https://www.cursor.com/)
+### Example configuration for [Cursor](https://cursor.com/)
 
 ```json
 {

@@ -11,7 +11,6 @@ RSpec.describe Cask::Reinstall, :cask do
     Cask::Installer.new(caffeine).install
 
     output = Regexp.new <<~EOS
-      ==> Fetching downloads for:.*caffeine
       ==> Uninstalling Cask local-caffeine
       ==> Backing up App 'Caffeine.app' to '.*Caffeine.app'
       ==> Removing App '.*Caffeine.app'
@@ -23,7 +22,7 @@ RSpec.describe Cask::Reinstall, :cask do
 
     expect do
       described_class.reinstall_casks(Cask::CaskLoader.load("local-caffeine"))
-    end.to output(output).to_stdout
+    end.to output(output).to_stdout.and output(/==> Fetching downloads for:.*caffeine/).to_stderr
   end
 
   it "displays the reinstallation progress with zapping" do
@@ -32,7 +31,6 @@ RSpec.describe Cask::Reinstall, :cask do
     Cask::Installer.new(caffeine).install
 
     output = Regexp.new <<~EOS
-      ==> Fetching downloads for:.*caffeine
       ==> Backing up App 'Caffeine.app' to '.*Caffeine.app'
       ==> Removing App '.*Caffeine.app'
       ==> Dispatching zap stanza
@@ -46,7 +44,7 @@ RSpec.describe Cask::Reinstall, :cask do
 
     expect do
       described_class.reinstall_casks(Cask::CaskLoader.load("local-caffeine"), zap: true)
-    end.to output(output).to_stdout
+    end.to output(output).to_stdout.and output(/==> Fetching downloads for:.*caffeine/).to_stderr
   end
 
   it "allows reinstalling a Cask" do

@@ -126,7 +126,6 @@ module Formulary
     Homebrew::Trust.require_trusted_formula!(name, path)
 
     require "formula"
-    require "ignorable"
     require "stringio"
 
     # Capture stdout to prevent formulae from printing to stdout unexpectedly.
@@ -144,16 +143,20 @@ module Formulary
       mod.const_set(:BUILD_FLAGS, flags)
       mod.module_eval(contents, path.to_s)
     rescue NameError, ArgumentError, ScriptError, MethodDeprecatedError, MacOSVersion::Error => e
-      if e.is_a?(Ignorable::ExceptionMixin)
-        e.ignore
-      else
-        remove_const(namespace)
-        raise FormulaUnreadableError.new(name, e)
-      end
+      remove_const(namespace)
+      raise FormulaUnreadableError.new(name, e)
     end
     ENV.clear_sensitive_environment_for_eval! do
       if ignore_errors
-        Ignorable.hook_raise(&eval_formula)
+        require "ignorable"
+
+        on_ignorable = lambda do |e|
+          case e
+          when NameError, ArgumentError, MethodDeprecatedError, MacOSVersion::Error then :ignore
+          else :raise
+          end
+        end
+        Ignorable.hook_raise(on_ignorable:, &eval_formula)
       else
         eval_formula.call
       end
@@ -942,7 +945,7 @@ module Formulary
     sig { overridable.params(flags: T::Array[String]).void }
     def load_from_api(flags:)
       formula_struct = Homebrew::API::Internal.formula_struct(name)
-      api_source = Homebrew::API::Internal.formula_hashes[name]
+      api_source = Homebrew::API::Internal.formula_hash(name)
       tap_git_head = Homebrew::API::Internal.formula_tap_git_head
 
       raise FormulaUnavailableError, name if api_source.nil?

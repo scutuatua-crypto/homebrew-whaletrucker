@@ -222,6 +222,31 @@ RSpec.describe Homebrew::DevCmd::Bump do
 
       bump.retrieve_and_display_info_and_open_pr(c_basic, "basic-cask", [], ambiguous_cask: false)
     end
+
+    it "notes when a newer upstream version was skipped due to release cooldown" do
+      version_info = Homebrew::DevCmd::Bump::VersionBumpInfo.new(
+        type:                          :formula,
+        deprecated:                    { general: false },
+        multiple_versions:             { current: false, new: false },
+        version_name:                  "formula version:",
+        current_version:               Homebrew::BumpVersionParser.new(general: Version.new("1.2.3")),
+        new_version:                   Homebrew::BumpVersionParser.new(general: Version.new("1.2.3")),
+        repology_latest:               "not found",
+        newer_than_upstream:           { general: false },
+        cooldown_skipped_versions:     { general: Version.new("1.2.4") },
+        duplicate_pull_requests:       nil,
+        maybe_duplicate_pull_requests: nil,
+      )
+      allow(bump).to receive(:retrieve_versions_by_arch).and_return(version_info)
+
+      expect { bump.retrieve_and_display_info_and_open_pr(f_basic, "basic_formula", [], ambiguous_cask: false) }
+        .to output(<<~EOS).to_stdout
+          ==> basic_formula has a new version in release cooldown
+          Current formula version:  1.2.3
+          Latest livecheck version: 1.2.4 (released less than 1 day ago)
+          Bump-ready version:       1.2.3
+        EOS
+    end
   end
 
   describe "::retrieve_versions_by_arch" do
@@ -263,11 +288,26 @@ RSpec.describe Homebrew::DevCmd::Bump do
         end
       RUBY
     end
+    let(:c_multi_arch) do
+      Cask::CaskLoader.load(+<<-RUBY)
+        cask "multi_arch_cask" do
+          arch arm: "arm64", intel: "x64"
+
+          version "1.2.3"
+          sha256 :no_check
+
+          url "https://brew.sh/test-\#{arch}.dmg"
+          name "Multi Arch Cask"
+          desc "Multi arch cask"
+          homepage "https://brew.sh"
+        end
+      RUBY
+    end
 
     it "simulates only arm and consolidates to a general version when `depends_on arch:` restricts to arm-only" do
       allow(c_arm_only).to receive(:sourcefile_path).and_return(Pathname("arm_only_cask.rb"))
       allow(Cask::CaskLoader).to receive(:load).and_return(c_arm_only)
-      expect(bump).to receive(:livecheck_result).once.and_return(Version.new("1.2.4"))
+      expect(bump).to receive(:livecheck_result).once.and_return([Version.new("1.2.4"), nil])
 
       version_info = bump.retrieve_versions_by_arch(
         formula_or_cask: c_arm_only, repositories: [], name: "arm-only-cask",
@@ -278,12 +318,36 @@ RSpec.describe Homebrew::DevCmd::Bump do
     it "simulates only intel and consolidates to a general version when `depends_on arch:` restricts to intel-only" do
       allow(c_intel_only).to receive(:sourcefile_path).and_return(Pathname("intel_only_cask.rb"))
       allow(Cask::CaskLoader).to receive(:load).and_return(c_intel_only)
-      expect(bump).to receive(:livecheck_result).once.and_return(Version.new("1.2.4"))
+      expect(bump).to receive(:livecheck_result).once.and_return([Version.new("1.2.4"), nil])
 
       version_info = bump.retrieve_versions_by_arch(
         formula_or_cask: c_intel_only, repositories: [], name: "intel-only-cask",
       )
       expect(version_info.new_version).to eq(Homebrew::BumpVersionParser.new(general: Version.new("1.2.4")))
+    end
+
+    it "records the upstream version skipped due to release cooldown" do
+      expect(bump).to receive(:livecheck_result).once.and_return([Version.new("1.2.3"), Version.new("1.2.4")])
+
+      version_info = bump.retrieve_versions_by_arch(
+        formula_or_cask: f_basic, repositories: [], name: "basic_formula",
+      )
+      expect(version_info.cooldown_skipped_versions).to eq({ general: Version.new("1.2.4") })
+    end
+
+    it "records cooldown-skipped versions per architecture" do
+      allow(c_multi_arch).to receive(:sourcefile_path).and_return(Pathname("multi_arch_cask.rb"))
+      allow(Cask::CaskLoader).to receive(:load).and_return(c_multi_arch)
+      expect(bump).to receive(:livecheck_result).twice.and_return(
+        [Version.new("1.2.3"), Version.new("1.2.4")],
+        [Version.new("1.2.3"), Version.new("1.2.5")],
+      )
+
+      version_info = bump.retrieve_versions_by_arch(
+        formula_or_cask: c_multi_arch, repositories: [], name: "multi-arch-cask",
+      )
+      expect(version_info.cooldown_skipped_versions).to eq({ arm:   Version.new("1.2.5"),
+                                                             intel: Version.new("1.2.4") })
     end
   end
 

@@ -1205,6 +1205,93 @@ RSpec.describe Cask::Audit, :cask do
       end
     end
 
+    describe "artifact case checks" do
+      let(:online) { true }
+      let(:only) { ["artifact_case"] }
+      let(:tmpdir) { mktmpdir }
+      let(:cask) do
+        Cask::Cask.new("artifact-case") do
+          version "1.0"
+          sha256 :no_check
+          url "https://brew.sh/artifact-case.zip"
+          name "Artifact Case"
+          homepage "https://brew.sh/"
+
+          app "artifact case.app"
+        end
+      end
+
+      before do
+        allow(audit).to receive(:extract_artifacts).and_yield(cask.artifacts, tmpdir)
+      end
+
+      context "when the case matches" do
+        before { (tmpdir/"artifact case.app").mkpath }
+
+        it { is_expected.to pass }
+      end
+
+      context "when the case does not match" do
+        before { (tmpdir/"Artifact Case.app").mkpath }
+
+        it { is_expected.to error_with(/does not match the case of the extracted/) }
+      end
+
+      context "when both cases are present on disk" do
+        # Both spellings cannot be created on a case-insensitive filesystem.
+        before do
+          allow(tmpdir).to receive(:children)
+            .and_return([tmpdir/"Artifact Case.app", tmpdir/"artifact case.app"])
+        end
+
+        it { is_expected.to pass }
+      end
+
+      context "when the artifact is missing" do
+        it { is_expected.to pass }
+      end
+
+      context "when a binary in the appdir has the wrong case" do
+        let(:cask) do
+          Cask::Cask.new("artifact-case") do
+            version "1.0"
+            sha256 :no_check
+            url "https://brew.sh/artifact-case.zip"
+            name "Artifact Case"
+            homepage "https://brew.sh/"
+
+            app "Artifact Case.app"
+            binary "#{appdir}/Artifact Case.app/Contents/MacOS/artifact"
+          end
+        end
+
+        before do
+          (tmpdir/"Artifact Case.app/Contents/MacOS").mkpath
+          FileUtils.touch tmpdir/"Artifact Case.app/Contents/MacOS/Artifact"
+        end
+
+        it { is_expected.to error_with(/does not match the case of the extracted/) }
+      end
+
+      context "when a manual installer has the wrong case" do
+        let(:cask) do
+          Cask::Cask.new("artifact-case") do
+            version "1.0"
+            sha256 :no_check
+            url "https://brew.sh/artifact-case.zip"
+            name "Artifact Case"
+            homepage "https://brew.sh/"
+
+            installer manual: "Artifact Case.app"
+          end
+        end
+
+        before { (tmpdir/"Artifact Case.APP").mkpath }
+
+        it { is_expected.to error_with(/does not match the case of the extracted/) }
+      end
+    end
+
     describe "minimum OS checks" do
       let(:online) { true }
       let(:only) { ["min_os"] }
@@ -1440,6 +1527,55 @@ RSpec.describe Cask::Audit, :cask do
         it "passes" do
           expect(run).to pass
         end
+      end
+    end
+
+    describe "checking verified" do
+      let(:only) { %w[unnecessary_verified] }
+      let(:cask_token) { "with-verified" }
+      let(:cask) do
+        tmp_cask cask_token.to_s, <<~RUBY
+          cask "#{cask_token}" do
+            version "1.8.0_72,8.13.0.5"
+            sha256 "8dd95daa037ac02455435446ec7bc737b34567afe9156af7d20b2a83805c1d8a"
+            url "https://brew.sh/foo-\#{version.after_comma}.zip", verified: "brew.sh/"
+            name "Audit"
+            desc "Audit Description"
+            homepage "https://foo.example.org"
+            app "Audit.app"
+          end
+        RUBY
+      end
+
+      context "when `new_cask` is true" do
+        let(:new_cask) { true }
+
+        it { is_expected.to error_with(/the `verified` parameter has been deprecated/) }
+      end
+
+      context "when `new_cask` is false" do
+        let(:new_cask) { false }
+
+        it { is_expected.to pass }
+      end
+
+      context "without verified" do
+        let(:cask_token) { "without-verified" }
+        let(:cask) do
+          tmp_cask cask_token.to_s, <<~RUBY
+            cask "#{cask_token}" do
+              version "1.8.0_72,8.13.0.5"
+              sha256 "8dd95daa037ac02455435446ec7bc737b34567afe9156af7d20b2a83805c1d8a"
+              url "https://brew.sh/foo-\#{version.after_comma}.zip"
+              name "Audit"
+              desc "Audit Description"
+              homepage "https://foo.example.org"
+              app "Audit.app"
+            end
+          RUBY
+        end
+
+        it { is_expected.to pass }
       end
     end
 

@@ -145,7 +145,7 @@ module Homebrew
         sig { params(artifacts: T::Array[T::Hash[Symbol, T.untyped]]).returns(T::Array[CaskStruct::ArtifactArgs]) }
         def process_artifacts(artifacts)
           artifacts.map do |artifact|
-            key = T.must(artifact.keys.first)
+            key = T.must(artifact.keys.find { |artifact_key| artifact_key != :target })
 
             # Pass an empty block to artifacts like postflight that can't be loaded from the API,
             # but need to be set to something.
